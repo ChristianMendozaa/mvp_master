@@ -1,0 +1,7 @@
+{
+  "name": "mvp-master-sample-webapp",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

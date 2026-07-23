@@ -1,0 +1,36 @@
+# Local configuration and secrets
+.env
+.secrets/
+*.pem
+*.key
+auth.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+dist/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# Generated / local runtime data
+.artifacts/
+.workspaces/
+*.log
+.DS_Store
+
+# Editors
+.idea/
+.vscode/

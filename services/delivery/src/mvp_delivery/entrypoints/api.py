@@ -1,0 +1,470 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import asdict
+from typing import Annotated, Any
+from uuid import UUID, uuid4
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
+from mvp_common.contracts import SecretReference
+from mvp_common.logging import configure_logging
+from mvp_observability import configure_observability
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from mvp_delivery.adapters.oidc import Principal, PrincipalProvider
+from mvp_delivery.adapters.postgres import (
+    PostgresDeliveryRepository,
+    PostgresWorkflowGateway,
+)
+from mvp_delivery.application.service import DeliveryService
+from mvp_delivery.domain.models import AuthenticationMode, ExecutionBudget, ExecutionStatus
+from mvp_delivery.settings import Settings
+
+MANAGEMENT_ROLES = {"OWNER", "ADMIN"}
+EXECUTION_ROLES = {"OWNER", "ADMIN", "DEVELOPER", "REVIEWER"}
+REVIEW_ROLES = {"OWNER", "ADMIN", "REVIEWER"}
+TERMINAL_STATUSES = {
+    ExecutionStatus.DELIVERED,
+    ExecutionStatus.FAILED,
+    ExecutionStatus.CANCELLED,
+}
+
+
+class RequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class SecretReferenceRequest(RequestModel):
+    store: str = Field(min_length=1, max_length=64)
+    namespace: str = Field(min_length=1, max_length=128)
+    key: str = Field(min_length=1, max_length=256)
+    version: str | None = Field(default=None, max_length=128)
+
+
+class ProviderConfigurationCreate(RequestModel):
+    display_name: str = Field(min_length=2, max_length=200)
+    provider: str = Field(min_length=1, max_length=64)
+    runtime: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=200)
+    authentication_mode: AuthenticationMode
+    secret_reference: SecretReferenceRequest | None = None
+    is_development_substitute: bool = False
+
+
+class RunnerPoolCreate(RequestModel):
+    name: str = Field(min_length=2, max_length=200)
+    runner_type: str = Field(pattern=r"^(LOCAL|CUSTOMER_HOSTED|PLATFORM_MANAGED)$")
+
+
+class RunnerEnrollmentCreate(RequestModel):
+    pool_id: UUID
+
+
+class RunnerEnroll(RequestModel):
+    enrollment_token: str = Field(min_length=32, max_length=256)
+    name: str = Field(min_length=2, max_length=200)
+    capabilities: tuple[str, ...] = Field(min_length=1, max_length=100)
+
+
+class BudgetRequest(RequestModel):
+    max_duration_seconds: int = Field(ge=30, le=86400)
+    max_attempts: int = Field(ge=1, le=10)
+    max_turns: int = Field(ge=1, le=100)
+    max_cost_minor: int = Field(ge=0, le=10_000_000)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class ReadyWorkItem(RequestModel):
+    project_id: UUID
+    work_item_id: UUID
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=10000)
+    acceptance_criteria: tuple[str, ...] = Field(min_length=1, max_length=100)
+    repository_connection_id: UUID
+    provider_configuration_id: UUID
+    runner_pool_id: UUID
+    budget: BudgetRequest
+    correlation_id: UUID
+
+
+class AgentEventReport(RequestModel):
+    sequence: int = Field(ge=1)
+    kind: str = Field(pattern=r"^(PLAN|TOOL|COMMAND|RESULT|ERROR|APPROVAL|USAGE)$")
+    name: str = Field(min_length=1, max_length=128)
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class AgentReport(RequestModel):
+    success: bool
+    summary: str = Field(max_length=4000)
+    turns: int = Field(ge=0, le=10000)
+    changed_paths: tuple[str, ...] = Field(max_length=10000)
+    events: tuple[AgentEventReport, ...] = Field(max_length=10000)
+
+
+class ValidationEvidenceReport(RequestModel):
+    executable: str = Field(min_length=1, max_length=512)
+    arguments: tuple[str, ...] = Field(max_length=100)
+    exit_code: int
+    stdout: str = Field(max_length=65536)
+    stderr: str = Field(max_length=65536)
+    duration_ms: int = Field(ge=0)
+
+
+class ValidationReport(RequestModel):
+    passed: bool
+    validator_image: str = Field(min_length=1, max_length=512)
+    evidence: tuple[ValidationEvidenceReport, ...] = Field(max_length=100)
+
+
+class RunnerJobComplete(RequestModel):
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    patch: str = Field(max_length=131072)
+    duration_seconds: int = Field(ge=0)
+    cost_minor: int = Field(ge=0)
+    agent: AgentReport
+    validation: ValidationReport
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    resolved = settings or Settings()
+    configure_logging()
+    engine = create_async_engine(resolved.database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    principals = PrincipalProvider(resolved)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        await engine.dispose()
+
+    app = FastAPI(
+        title="MVP Master Delivery",
+        version="1.0.0",
+        lifespan=lifespan,
+        openapi_url="/api/v1/openapi.json",
+        docs_url="/api/v1/docs",
+    )
+    configure_observability(app, engine, service_name=resolved.service_name)
+
+    async def session_dependency() -> AsyncIterator[AsyncSession]:
+        async with sessions() as session:
+            try:
+                yield session
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+
+    Session = Annotated[AsyncSession, Depends(session_dependency)]
+    PrincipalDependency = Annotated[Principal, Depends(principals.authenticate)]
+
+    def repository(session: Session) -> PostgresDeliveryRepository:
+        return PostgresDeliveryRepository(session)
+
+    Repo = Annotated[PostgresDeliveryRepository, Depends(repository)]
+
+    def service(session: Session, repo: Repo) -> DeliveryService:
+        return DeliveryService(repo, PostgresWorkflowGateway(session))
+
+    Service = Annotated[DeliveryService, Depends(service)]
+
+    async def authorize(
+        repo: PostgresDeliveryRepository,
+        organization_id: UUID,
+        subject: str,
+        allowed: set[str],
+    ) -> None:
+        role = await repo.role_for(organization_id, subject)
+        if role not in allowed:
+            raise HTTPException(status_code=403, detail="membership cannot perform this action")
+
+    @app.get("/health/live")
+    async def live() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    async def ready() -> dict[str, str]:
+        async with engine.connect() as connection:
+            await connection.exec_driver_sql("select 1")
+        return {"status": "ready"}
+
+    @app.post(
+        "/api/v1/organizations/{organization_id}/provider-configurations",
+        status_code=201,
+    )
+    async def create_provider_configuration(
+        organization_id: UUID,
+        payload: ProviderConfigurationCreate,
+        principal: PrincipalDependency,
+        repo: Repo,
+        use_case: Service,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, MANAGEMENT_ROLES)
+        reference = (
+            SecretReference(**payload.secret_reference.model_dump())
+            if payload.secret_reference
+            else None
+        )
+        result = await use_case.create_provider_configuration(
+            organization_id=organization_id,
+            actor_subject=principal.subject,
+            display_name=payload.display_name,
+            provider=payload.provider,
+            runtime=payload.runtime,
+            model=payload.model,
+            authentication_mode=payload.authentication_mode,
+            secret_reference=reference,
+            is_development_substitute=payload.is_development_substitute,
+        )
+        return jsonable_encoder(asdict(result))
+
+    @app.get("/api/v1/organizations/{organization_id}/provider-configurations")
+    async def provider_configurations(
+        organization_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        return jsonable_encoder(
+            [asdict(item) for item in await repo.list_provider_configurations(organization_id)]
+        )
+
+    @app.post("/api/v1/organizations/{organization_id}/runner-pools", status_code=201)
+    async def create_runner_pool(
+        organization_id: UUID,
+        payload: RunnerPoolCreate,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> dict[str, str]:
+        await authorize(repo, organization_id, principal.subject, MANAGEMENT_ROLES)
+        pool_id = uuid4()
+        await repo.add_runner_pool(organization_id, pool_id, payload.name, payload.runner_type)
+        return {"id": str(pool_id), "name": payload.name, "runner_type": payload.runner_type}
+
+    @app.get("/api/v1/organizations/{organization_id}/runner-pools")
+    async def runner_pools(
+        organization_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        return await repo.list_runner_pools(organization_id)
+
+    @app.post(
+        "/api/v1/organizations/{organization_id}/runner-enrollments",
+        status_code=201,
+    )
+    async def create_runner_enrollment(
+        organization_id: UUID,
+        payload: RunnerEnrollmentCreate,
+        principal: PrincipalDependency,
+        repo: Repo,
+        use_case: Service,
+    ) -> dict[str, str]:
+        await authorize(repo, organization_id, principal.subject, MANAGEMENT_ROLES)
+        token = await use_case.create_runner_enrollment(
+            organization_id=organization_id,
+            actor_subject=principal.subject,
+            pool_id=payload.pool_id,
+        )
+        return {"enrollment_token": token, "expires_in_seconds": "600"}
+
+    @app.post("/runner/v1/enroll", status_code=201)
+    async def enroll_runner(payload: RunnerEnroll, use_case: Service) -> dict[str, str]:
+        runner, credential = await use_case.enroll_runner(
+            enrollment_token=payload.enrollment_token,
+            name=payload.name,
+            capabilities=payload.capabilities,
+        )
+        return {
+            "runner_id": str(runner.id),
+            "organization_id": str(runner.organization_id),
+            "runner_credential": credential,
+        }
+
+    async def authenticated_runner(
+        repo: PostgresDeliveryRepository,
+        authorization: str | None,
+        runner_id_header: str | None,
+    ) -> Any:
+        if not authorization or not authorization.startswith("Runner ") or not runner_id_header:
+            raise HTTPException(status_code=401, detail="runner identity is required")
+        try:
+            runner_id = UUID(runner_id_header)
+        except ValueError as error:
+            raise HTTPException(status_code=401, detail="runner identity is invalid") from error
+        runner = await repo.authenticate_runner(
+            runner_id, authorization.removeprefix("Runner ").strip()
+        )
+        if runner is None:
+            raise HTTPException(status_code=401, detail="runner identity is invalid")
+        return runner
+
+    @app.post("/runner/v1/jobs/lease")
+    async def lease_runner_job(
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> Any:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        job = await repo.lease_runner_job(runner)
+        if job is None:
+            return Response(status_code=204)
+        return {
+            "job_id": str(job.id),
+            "execution_id": str(job.execution_id),
+            "organization_id": str(job.organization_id),
+            **job.payload,
+        }
+
+    @app.post("/runner/v1/jobs/{job_id}/complete")
+    async def complete_runner_job(
+        job_id: UUID,
+        payload: RunnerJobComplete,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        completed = await repo.complete_runner_job(runner, job_id, payload.model_dump(mode="json"))
+        if completed is None:
+            raise HTTPException(status_code=409, detail="job lease is not active for runner")
+        return {"status": "accepted"}
+
+    @app.post("/runner/v1/jobs/{job_id}/heartbeat")
+    async def heartbeat_runner_job(
+        job_id: UUID,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        heartbeat = await repo.heartbeat_runner_job(runner, job_id)
+        if heartbeat is None:
+            raise HTTPException(status_code=409, detail="job lease is not active for runner")
+        return {"status": "extended"}
+
+    @app.post("/api/v1/organizations/{organization_id}/executions", status_code=202)
+    async def accept_ready_work_item(
+        organization_id: UUID,
+        payload: ReadyWorkItem,
+        principal: PrincipalDependency,
+        repo: Repo,
+        use_case: Service,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> Any:
+        del idempotency_key
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        result = await use_case.accept_ready_work_item(
+            organization_id=organization_id,
+            project_id=payload.project_id,
+            work_item_id=payload.work_item_id,
+            title=payload.title,
+            description=payload.description,
+            acceptance_criteria=payload.acceptance_criteria,
+            repository_connection_id=payload.repository_connection_id,
+            provider_configuration_id=payload.provider_configuration_id,
+            runner_pool_id=payload.runner_pool_id,
+            budget=ExecutionBudget(**payload.budget.model_dump()),
+            correlation_id=payload.correlation_id,
+        )
+        return jsonable_encoder(asdict(result))
+
+    @app.get("/api/v1/organizations/{organization_id}/executions")
+    async def list_executions(
+        organization_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        return jsonable_encoder(
+            [asdict(item) for item in await repo.list_executions(organization_id)]
+        )
+
+    @app.post("/api/v1/organizations/{organization_id}/executions/{execution_id}/approve")
+    async def approve_execution(
+        organization_id: UUID,
+        execution_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+        use_case: Service,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, REVIEW_ROLES)
+        return jsonable_encoder(
+            asdict(
+                await use_case.approve_execution(
+                    organization_id=organization_id,
+                    execution_id=execution_id,
+                    actor_subject=principal.subject,
+                )
+            )
+        )
+
+    @app.post("/api/v1/organizations/{organization_id}/executions/{execution_id}/cancel")
+    async def cancel_execution(
+        organization_id: UUID,
+        execution_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+        use_case: Service,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        return jsonable_encoder(
+            asdict(
+                await use_case.cancel_execution(
+                    organization_id=organization_id,
+                    execution_id=execution_id,
+                    actor_subject=principal.subject,
+                )
+            )
+        )
+
+    @app.get("/api/v1/organizations/{organization_id}/executions/{execution_id}/events")
+    async def execution_events(
+        organization_id: UUID,
+        execution_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    ) -> StreamingResponse:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        after = int(last_event_id or "0")
+
+        async def stream() -> AsyncIterator[str]:
+            current = after
+            idle_cycles = 0
+            while idle_cycles < 300:
+                async with sessions() as stream_session:
+                    stream_repo = PostgresDeliveryRepository(stream_session)
+                    events = await stream_repo.list_events(organization_id, execution_id, current)
+                    execution = await stream_repo.get_execution(organization_id, execution_id)
+                for event in events:
+                    current = event.sequence
+                    yield (
+                        f"id: {event.sequence}\n"
+                        f"data: {json.dumps(jsonable_encoder(asdict(event)))}\n\n"
+                    )
+                if events:
+                    idle_cycles = 0
+                else:
+                    idle_cycles += 1
+                    yield ": keep-alive\n\n"
+                if execution and execution.status in TERMINAL_STATUSES and not events:
+                    break
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    return app
+
+
+app = create_app()

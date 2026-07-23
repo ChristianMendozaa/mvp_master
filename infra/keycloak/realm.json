@@ -1,0 +1,63 @@
+{
+  "realm": "mvp-master",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "mvp-web",
+      "name": "MVP Master Web",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "mvp-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "mvp-api",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "username": "owner@example.test",
+      "email": "owner@example.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Local",
+      "lastName": "Owner",
+      "credentials": [{"type": "password", "value": "local-owner-only", "temporary": false}]
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "username": "reviewer@example.test",
+      "email": "reviewer@example.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Local",
+      "lastName": "Reviewer",
+      "credentials": [{"type": "password", "value": "local-reviewer-only", "temporary": false}]
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "username": "client@example.test",
+      "email": "client@example.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Local",
+      "lastName": "Client",
+      "credentials": [{"type": "password", "value": "local-client-only", "temporary": false}]
+    }
+  ]
+}

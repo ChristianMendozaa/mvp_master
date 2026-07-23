@@ -1,0 +1,545 @@
+name: ${COMPOSE_PROJECT_NAME:-mvp_master}
+
+x-python-environment: &python-environment
+  KEYCLOAK_BROWSER_ISSUER: http://localhost:8081/realms/mvp-master
+  KEYCLOAK_AUDIENCE: mvp-api
+  NATS_URL: nats://nats:4222
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_SERVICE_NAME: mvp-master
+
+x-service-security: &service-security
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-local-postgres-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-postgres}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [backend]
+
+  nats:
+    image: nats:2.11.8-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    networks: [backend]
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PWD: ${POSTGRES_SUPERUSER_PASSWORD:-local-postgres-only}
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "temporal",
+          "operator",
+          "cluster",
+          "health",
+          "--address",
+          "temporal:7233",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [backend]
+
+  temporal-ui:
+    image: temporalio/ui:2.42.1
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "8082:8080"
+    networks: [backend]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.3
+    command: ["start-dev", "--import-realm", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-local-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-local-keycloak-only}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_SUPERUSER:-postgres}
+      KC_DB_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-local-postgres-only}
+      KC_HOSTNAME: http://localhost:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    volumes:
+      - ./infra/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    networks: [backend]
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-local-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-local-minio-secret}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [backend]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.68.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+    networks: [backend]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.131.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on: [jaeger]
+    networks: [backend]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks: [backend]
+
+  migrate-control:
+    build:
+      context: .
+      dockerfile: services/control_plane/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *python-environment
+      CONTROL_PLANE_DATABASE_URL: postgresql+asyncpg://control_plane:local-control-plane-only@postgres:5432/control_plane
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  seed-control:
+    build:
+      context: .
+      dockerfile: services/control_plane/Dockerfile
+    command: ["python", "-m", "mvp_control_plane.seed"]
+    environment:
+      <<: *python-environment
+      CONTROL_PLANE_DATABASE_URL: postgresql+asyncpg://control_plane:local-control-plane-only@postgres:5432/control_plane
+    depends_on:
+      migrate-control:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: services/control_plane/Dockerfile
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      CONTROL_PLANE_DATABASE_URL: postgresql+asyncpg://control_plane:local-control-plane-only@postgres:5432/control_plane
+      OIDC_JWKS_URL: http://keycloak:8080/realms/mvp-master/protocol/openid-connect/certs
+    depends_on:
+      seed-control:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [backend]
+
+  control-outbox:
+    build:
+      context: .
+      dockerfile: services/control_plane/Dockerfile
+    command: ["python", "-m", "mvp_control_plane.entrypoints.outbox"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      CONTROL_PLANE_DATABASE_URL: postgresql+asyncpg://control_plane:local-control-plane-only@postgres:5432/control_plane
+    depends_on:
+      seed-control:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    networks: [backend]
+
+  migrate-integrations:
+    build:
+      context: .
+      dockerfile: services/integrations/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *python-environment
+      INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  seed-integrations:
+    build:
+      context: .
+      dockerfile: services/integrations/Dockerfile
+    command: ["python", "-m", "mvp_integrations.seed"]
+    environment:
+      <<: *python-environment
+      INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
+    depends_on:
+      migrate-integrations:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  integrations:
+    build:
+      context: .
+      dockerfile: services/integrations/Dockerfile
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
+      OIDC_JWKS_URL: http://keycloak:8080/realms/mvp-master/protocol/openid-connect/certs
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-only}
+    depends_on:
+      seed-integrations:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [backend]
+
+  integrations-events:
+    build:
+      context: .
+      dockerfile: services/integrations/Dockerfile
+    command: ["python", "-m", "mvp_integrations.entrypoints.events"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
+    depends_on:
+      seed-integrations:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    networks: [backend]
+
+  migrate-delivery:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+
+  seed-delivery:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    command: ["python", "-m", "mvp_delivery.seed"]
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+    depends_on:
+      migrate-delivery:
+        condition: service_completed_successfully
+    networks: [backend]
+
+  delivery:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+      OIDC_JWKS_URL: http://keycloak:8080/realms/mvp-master/protocol/openid-connect/certs
+    depends_on:
+      seed-delivery:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [backend]
+
+  delivery-events:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    command: ["python", "-m", "mvp_delivery.entrypoints.events"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+    depends_on:
+      seed-delivery:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    networks: [backend]
+
+  workflow-dispatcher:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    command: ["python", "-m", "mvp_delivery.entrypoints.workflow_dispatcher"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      seed-delivery:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    networks: [backend]
+
+  workflow-worker:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    command: ["python", "-m", "mvp_delivery.entrypoints.workflow_worker"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
+      TEMPORAL_ADDRESS: temporal:7233
+      INTEGRATIONS_URL: http://integrations:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-only}
+    depends_on:
+      seed-delivery:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+      integrations:
+        condition: service_healthy
+    networks: [backend]
+
+  runner-volume-init:
+    image: alpine:3.22.1
+    command: ["chown", "10001:10001", "/workspaces"]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    volumes:
+      - runner-workspaces:/workspaces
+    networks: [backend]
+
+  dind:
+    image: docker:29-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - dind-data:/var/lib/docker
+      - dind-certs:/certs
+      - runner-workspaces:/workspaces
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      runner-volume-init:
+        condition: service_completed_successfully
+    networks:
+      backend:
+        aliases: [docker]
+
+  dind-image-init:
+    image: docker:29-cli
+    command:
+      [
+        "docker",
+        "build",
+        "--file",
+        "/source/runners/docker_runner/Dockerfile.job",
+        "--tag",
+        "mvp-runner-job:local",
+        "/source",
+      ]
+    environment:
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+    volumes:
+      - dind-certs:/certs:ro
+      - ./:/source:ro
+    depends_on:
+      dind:
+        condition: service_healthy
+    networks: [backend]
+
+  runner:
+    build:
+      context: .
+      dockerfile: runners/docker_runner/Dockerfile
+    environment:
+      DELIVERY_URL: http://delivery:8000
+      RUNNER_ID: 00000000-0000-0000-0000-000000000006
+      RUNNER_CREDENTIAL: local-runner-credential-only
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      WORKSPACE_ROOT: /workspaces
+      FIXTURE_PATH: /fixtures/sample-webapp
+      JOB_IMAGE: mvp-runner-job:local
+    volumes:
+      - dind-certs:/certs:ro
+      - runner-workspaces:/workspaces
+      - ./fixtures/sample-webapp:/fixtures/sample-webapp:ro
+    depends_on:
+      dind-image-init:
+        condition: service_completed_successfully
+      delivery:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      OIDC_CLIENT_ID: mvp-web
+      OIDC_BROWSER_ISSUER: http://localhost:8081/realms/mvp-master
+      OIDC_INTERNAL_ISSUER: http://keycloak:8080/realms/mvp-master
+      CONTROL_PLANE_URL: http://control-plane:8000
+      INTEGRATIONS_URL: http://integrations:8000
+      DELIVERY_URL: http://delivery:8000
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      integrations:
+        condition: service_healthy
+      delivery:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks: [backend]
+
+networks:
+  backend:
+    internal: false
+
+volumes:
+  postgres-data:
+  nats-data:
+  minio-data:
+  dind-data:
+  dind-certs:
+  runner-workspaces:

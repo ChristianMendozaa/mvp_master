@@ -1,0 +1,11 @@
+CREATE ROLE control_plane LOGIN PASSWORD 'local-control-plane-only' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE control_plane OWNER control_plane;
+
+CREATE ROLE integrations LOGIN PASSWORD 'local-integrations-only' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE integrations OWNER integrations;
+
+CREATE ROLE delivery LOGIN PASSWORD 'local-delivery-only' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+CREATE DATABASE delivery OWNER delivery;
+
+CREATE DATABASE temporal;
+CREATE DATABASE keycloak;

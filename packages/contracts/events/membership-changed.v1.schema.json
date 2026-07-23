@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.mvp-master.test/events/membership-changed.v1.schema.json",
+  "title": "Membership changed v1 data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["subject", "role", "active", "project_ids", "client_ids"],
+  "properties": {
+    "subject": { "type": "string", "minLength": 1 },
+    "role": {
+      "enum": ["OWNER", "ADMIN", "DEVELOPER", "REVIEWER", "CLIENT"]
+    },
+    "active": { "type": "boolean" },
+    "project_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "client_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    }
+  }
+}

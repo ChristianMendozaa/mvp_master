@@ -1,0 +1,13 @@
+FROM python:3.13.7-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH"
+WORKDIR /app
+RUN apt-get update && apt-get install --no-install-recommends -y git ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
+COPY pyproject.toml uv.lock ./
+COPY packages/python_common packages/python_common
+COPY runners/docker_runner runners/docker_runner
+RUN pip install --no-cache-dir uv==0.11.16 && uv sync --frozen --package mvp-docker-runner --no-dev
+USER app
+CMD ["python", "-m", "mvp_runner.entrypoints.daemon"]

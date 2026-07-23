@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #17201d;
+  --muted: #63706b;
+  --paper: #f4f2ec;
+  --panel: #fffefa;
+  --line: #d9ddd7;
+  --brand: #086c54;
+  --brand-dark: #04513f;
+  --accent: #e5a94c;
+  --danger: #a63d3d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 8%, rgb(8 108 84 / 10%), transparent 32rem),
+    var(--paper);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+.button {
+  border: 0;
+  border-radius: 0.55rem;
+  background: var(--brand);
+  color: white;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.7rem 1rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+button:hover,
+.button:hover {
+  background: var(--brand-dark);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button.secondary {
+  background: #e7ece9;
+  color: var(--ink);
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: white;
+  color: var(--ink);
+  padding: 0.72rem 0.8rem;
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+label {
+  display: grid;
+  gap: 0.38rem;
+  color: #34413c;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+:focus-visible {
+  outline: 3px solid rgb(229 169 76 / 75%);
+  outline-offset: 2px;
+}
+
+.shell {
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 1.25rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  box-shadow: 0 0.6rem 2rem rgb(34 54 47 / 6%);
+  padding: 1.2rem;
+}
+
+.eyebrow {
+  color: var(--brand);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.status {
+  border-radius: 999px;
+  background: #e8f3ef;
+  color: var(--brand-dark);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.3rem 0.6rem;
+}
+
+.status.local {
+  background: #fff0d6;
+  color: #765015;
+}
+
+@media (max-width: 760px) {
+  .shell {
+    padding: 0.75rem;
+  }
+}

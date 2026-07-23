@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.mvp-master.test/events/event-envelope.v1.schema.json",
+  "title": "MVP Master event envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "subject",
+    "organization_id",
+    "aggregate_version",
+    "correlation_id",
+    "data"
+  ],
+  "properties": {
+    "specversion": { "const": "1.0" },
+    "id": { "type": "string", "format": "uuid" },
+    "source": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "pattern": "^com\\.mvp\\.[a-z0-9_.]+\\.v[1-9][0-9]*$" },
+    "time": { "type": "string", "format": "date-time" },
+    "subject": { "type": "string", "minLength": 1 },
+    "organization_id": { "type": "string", "format": "uuid" },
+    "aggregate_version": { "type": "integer", "minimum": 1 },
+    "correlation_id": { "type": "string", "format": "uuid" },
+    "causation_id": { "type": ["string", "null"], "format": "uuid" },
+    "traceparent": { "type": ["string", "null"] },
+    "data": { "type": "object" }
+  }
+}
