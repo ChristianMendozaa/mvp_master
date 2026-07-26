@@ -208,6 +208,39 @@
         "title": "InternalPullRequestCreate",
         "type": "object"
       },
+      "ModelCredentialExchange": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "maxLength": 4096,
+            "minLength": 64,
+            "title": "Capability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability"
+        ],
+        "title": "ModelCredentialExchange",
+        "type": "object"
+      },
+      "ModelCredentialWrite": {
+        "additionalProperties": false,
+        "description": "A model-provider API key value, submitted once by an organization admin.\n\nWrite-only: this endpoint returns only a `SecretReference` (identifiers), never\nthe value back. Delivery's provider-configuration create endpoint takes that\nreference, never a raw value.",
+        "properties": {
+          "value": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ModelCredentialWrite",
+        "type": "object"
+      },
       "PullRequestCreate": {
         "additionalProperties": false,
         "properties": {
@@ -569,6 +602,93 @@
           }
         },
         "summary": "Complete Github Installation"
+      }
+    },
+    "/api/v1/organizations/{organization_id}/model-credentials": {
+      "post": {
+        "description": "Store a model-provider API key value once. Returns only a\n`SecretReference` \u2014 the value is never echoed back or logged. An\norganization admin submits this once per credential, then passes the\nreturned reference identifiers when creating a delivery provider\nconfiguration with `authentication_mode: API_KEY_REFERENCE`.",
+        "operationId": "create_model_credential_api_v1_organizations__organization_id__model_credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCredentialWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Create Model Credential Api V1 Organizations  Organization Id  Model Credentials Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Model Credential"
       }
     },
     "/api/v1/organizations/{organization_id}/repositories": {
@@ -1142,6 +1262,49 @@
           }
         },
         "summary": "Ready"
+      }
+    },
+    "/internal/v1/model-credentials/exchange": {
+      "post": {
+        "description": "Redeem a one-time, job-scoped capability (minted by delivery) for the\nplaintext value of the model API key it names. Mirrors\n`exchange_source_credential` exactly, on a distinct JWT audience so a\nsource capability and a model capability are never interchangeable.\n\nReturns only `{\"value\": ...}` \u2014 no reference echo, no metadata. The caller\n(the runner's `LeasedSecretResolver`, never the sandboxed agent process\nitself) is expected to inject the value directly into a job container's\nenvironment and never persist or log it.",
+        "operationId": "exchange_model_credential_internal_v1_model_credentials_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelCredentialExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Exchange Model Credential Internal V1 Model Credentials Exchange Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Model Credential"
       }
     },
     "/internal/v1/pull-requests": {

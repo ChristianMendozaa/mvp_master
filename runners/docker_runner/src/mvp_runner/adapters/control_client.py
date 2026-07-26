@@ -81,6 +81,18 @@ class RunnerControlClient:
         response.raise_for_status()
         return str(response.json()["capability"])
 
+    async def model_capability(self, identity: RunnerIdentity, job_id: str) -> str:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/jobs/{job_id}/model-capability",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return str(response.json()["capability"])
+
 
 class SourceCredentialClient:
     def __init__(self, base_url: str, client: httpx.AsyncClient) -> None:
@@ -96,3 +108,24 @@ class SourceCredentialClient:
         response.raise_for_status()
         payload = response.json()
         return {str(key): str(value) for key, value in payload.items()}
+
+
+class ModelCredentialClient:
+    """Redeems a model-capability token for the plaintext value it names.
+
+    Deliberately returns a bare `str`, not a dict — there is nothing else in the
+    response and a dict shape invites accidentally logging the whole object.
+    """
+
+    def __init__(self, base_url: str, client: httpx.AsyncClient) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+
+    async def exchange(self, capability: str) -> str:
+        response = await self._client.post(
+            f"{self._base_url}/internal/v1/model-credentials/exchange",
+            json={"capability": capability},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return str(response.json()["value"])

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from mvp_common.contracts import ExternalReference, SecretReference
 
+from mvp_delivery.domain.agent_runtimes import ensure_supported
 from mvp_delivery.domain.errors import BudgetExceeded, InvalidExecutionTransition
 
 
@@ -102,6 +103,12 @@ class AgentProviderConfiguration:
         needs_secret = self.authentication_mode is AuthenticationMode.API_KEY_REFERENCE
         if needs_secret != (self.secret_reference is not None):
             raise ValueError("API key mode requires exactly one secret reference")
+        ensure_supported(
+            runtime=self.runtime,
+            provider=self.provider,
+            authentication_mode=self.authentication_mode.value,
+            is_development_substitute=self.is_development_substitute,
+        )
 
 
 @dataclass(slots=True)

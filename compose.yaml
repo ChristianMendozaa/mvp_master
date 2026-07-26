@@ -523,6 +523,10 @@ services:
       WORKSPACE_ROOT: /workspaces
       FIXTURE_PATH: /fixtures/sample-webapp
       JOB_IMAGE: mvp-runner-job:local
+      AGENT_EGRESS_ENABLED: ${AGENT_EGRESS_ENABLED:-false}
+      AGENT_EGRESS_NETWORK: ${AGENT_EGRESS_NETWORK:-mvp-agent-egress}
+      AGENT_EGRESS_PROXY_IMAGE: ${AGENT_EGRESS_PROXY_IMAGE:-vimagick/tinyproxy}
+      AGENT_EGRESS_PROXY_PORT: ${AGENT_EGRESS_PROXY_PORT:-3128}
     volumes:
       - dind-certs:/certs:ro
       - runner-workspaces:/workspaces

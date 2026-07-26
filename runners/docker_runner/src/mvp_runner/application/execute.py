@@ -4,6 +4,7 @@ from uuid import UUID
 from mvp_common.contracts import SecretReference
 
 from mvp_runner.application.ports import AgentRuntime, Validator, WorkspaceManager
+from mvp_runner.domain.errors import UnsupportedAuthenticationMode, UnsupportedRuntime
 from mvp_runner.domain.models import (
     AgentRequest,
     AgentResult,
@@ -30,6 +31,7 @@ class RunnerExecutionService:
         execution_id: UUID,
         organization_id: UUID,
         runtime: str,
+        provider: str,
         model: str,
         authentication_mode: str,
         secret_reference: SecretReference | None,
@@ -41,15 +43,26 @@ class RunnerExecutionService:
         validation_commands: tuple[ValidationCommand, ...],
         keep_failed_workspace: bool = False,
     ) -> tuple[AgentResult, ValidationResult]:
-        agent = self._agents[runtime]
+        try:
+            agent = self._agents[runtime]
+        except KeyError as error:
+            raise UnsupportedRuntime(f"unsupported agent runtime: {runtime!r}") from error
         if not await agent.available():
             raise RuntimeError(f"agent runtime {runtime!r} is not available")
+        capabilities = await agent.capabilities()
+        if authentication_mode not in capabilities.supported_authentication_modes:
+            raise UnsupportedAuthenticationMode(
+                f"runtime {runtime!r} does not support authentication_mode "
+                f"{authentication_mode!r} (supports "
+                f"{capabilities.supported_authentication_modes!r})"
+            )
         workspace = await self._workspaces.provision(str(execution_id))
         try:
             result = await agent.execute(
                 AgentRequest(
                     execution_id=execution_id,
                     organization_id=organization_id,
+                    provider=provider,
                     model=model,
                     authentication_mode=authentication_mode,
                     secret_reference=secret_reference,

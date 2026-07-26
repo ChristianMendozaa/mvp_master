@@ -30,6 +30,7 @@ class AgentCapabilities:
 class AgentRequest:
     execution_id: UUID
     organization_id: UUID
+    provider: str
     model: str
     authentication_mode: str
     secret_reference: SecretReference | None

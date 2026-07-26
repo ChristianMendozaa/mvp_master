@@ -23,6 +23,7 @@ from mvp_delivery.adapters.postgres import (
     PostgresWorkflowGateway,
 )
 from mvp_delivery.application.service import DeliveryService
+from mvp_delivery.domain.errors import UnsupportedProviderConfiguration
 from mvp_delivery.domain.models import AuthenticationMode, ExecutionBudget, ExecutionStatus
 from mvp_delivery.settings import Settings
 
@@ -98,6 +99,7 @@ class AgentEventReport(RequestModel):
     kind: str = Field(pattern=r"^(PLAN|TOOL|COMMAND|RESULT|ERROR|APPROVAL|USAGE)$")
     name: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=4000)
+    metadata: dict[str, str | int | bool | None] = Field(default_factory=dict)
 
 
 class AgentReport(RequestModel):
@@ -106,6 +108,10 @@ class AgentReport(RequestModel):
     turns: int = Field(ge=0, le=10000)
     changed_paths: tuple[str, ...] = Field(max_length=10000)
     events: tuple[AgentEventReport, ...] = Field(max_length=10000)
+    session_id: str | None = Field(default=None, max_length=200)
+    input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
 
 
 class ValidationEvidenceReport(RequestModel):
@@ -212,17 +218,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.secret_reference
             else None
         )
-        result = await use_case.create_provider_configuration(
-            organization_id=organization_id,
-            actor_subject=principal.subject,
-            display_name=payload.display_name,
-            provider=payload.provider,
-            runtime=payload.runtime,
-            model=payload.model,
-            authentication_mode=payload.authentication_mode,
-            secret_reference=reference,
-            is_development_substitute=payload.is_development_substitute,
-        )
+        try:
+            result = await use_case.create_provider_configuration(
+                organization_id=organization_id,
+                actor_subject=principal.subject,
+                display_name=payload.display_name,
+                provider=payload.provider,
+                runtime=payload.runtime,
+                model=payload.model,
+                authentication_mode=payload.authentication_mode,
+                secret_reference=reference,
+                is_development_substitute=payload.is_development_substitute,
+            )
+        except (UnsupportedProviderConfiguration, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         return jsonable_encoder(asdict(result))
 
     @app.get("/api/v1/organizations/{organization_id}/provider-configurations")
@@ -387,6 +396,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             algorithm="HS256",
         )
         return {"capability": str(token), "expires_in_seconds": "120"}
+
+    @app.post("/runner/v1/jobs/{job_id}/model-capability")
+    async def model_capability(
+        job_id: UUID,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        """Mint a short-lived, single-use capability the leased runner redeems
+        against integrations' `/internal/v1/model-credentials/exchange` for the
+        plaintext value of the job's model API key. Mirrors `source_capability`
+        above; a distinct JWT audience (`mvp-integrations-model`) keeps a model
+        capability from ever being redeemable as a source capability or vice
+        versa. A job whose `authentication_mode` is not `API_KEY_REFERENCE`, or
+        that has no `secret_reference`, has nothing to mint a capability for.
+        """
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        job = await repo.heartbeat_runner_job(runner, job_id)
+        if job is None:
+            raise HTTPException(status_code=409, detail="job lease is not active for runner")
+        if job.payload.get("authentication_mode") != "API_KEY_REFERENCE":
+            raise HTTPException(
+                status_code=409, detail="job does not use API_KEY_REFERENCE authentication"
+            )
+        secret_reference = job.payload.get("secret_reference")
+        if not secret_reference:
+            raise HTTPException(status_code=409, detail="job has no secret reference")
+        now = int(time.time())
+        token = jwt.encode(
+            {
+                "iss": "mvp-delivery",
+                "aud": "mvp-integrations-model",
+                "iat": now,
+                "exp": now + 60,
+                "jti": str(uuid4()),
+                "organization_id": str(job.organization_id),
+                "execution_id": str(job.execution_id),
+                "job_id": str(job.id),
+                "runner_id": str(runner.id),
+                "secret_reference": secret_reference,
+                "purpose": "MODEL_CREDENTIAL_READ",
+            },
+            resolved.internal_service_token,
+            algorithm="HS256",
+        )
+        return {"capability": str(token), "expires_in_seconds": "60"}
 
     @app.post("/api/v1/organizations/{organization_id}/executions", status_code=202)
     async def accept_ready_work_item(

@@ -279,13 +279,13 @@ list of controls still required before an internet-facing deployment.
 | Auth & tenancy | OIDC Authorization Code + PKCE, BFF, membership roles, RLS | — | Consistent correlation/source-IP audit fields |
 | Control-plane workflow | Organization/project, intake, specification versions, approvals, work-item readiness | — | Anonymous/magic-link client intake |
 | Source control | Provider-neutral port; opt-in GitHub App manifest/install flow; encrypted secret references; scoped credential leases; reconciliation; checkout/branch/push/PR/check | Local GitHub-shaped connector (`LocalSourceControl`) | GHES, issues/comments, forks/submodules/LFS |
-| Agent runtimes | `AgentRuntime` port, normalized event mapping | `deterministic` runtime (bounded fixture change) | Codex CLI adapter (exists, not packaged in the job image); no Anthropic adapter yet |
+| Agent runtimes | `AgentRuntime` port, normalized event mapping, provider catalog (incl. Anthropic-compatible third-party vendors), model-credential lease, scoped model-provider egress; Codex CLI (API key + ChatGPT subscription — also serves the Codex SDK), Claude Code CLI (API key + Claude subscription, incl. Zhipu GLM/Moonshot Kimi), Claude Agent SDK (API key) | `deterministic` runtime (bounded fixture change) | Session resume, approval round-trip, live streamed events, live-credential CI certification, additional providers |
 | Runner isolation | One-use enrollment, hashed credentials, expiring/heartbeat leases, constrained job + read-only validator containers | Dedicated DinD daemon (dev-only) | Fencing tokens, control-channel mTLS, hardened production sandbox |
 | Messaging & workflow | Transactional outbox, JetStream, inbox dedup, Temporal with approval/cancel signals | — | Temporal replay/worker-restart test coverage |
 | Persistence & RLS | Per-service PostgreSQL, forced RLS, Alembic migrations, append-only audit tables | — | Tenant-isolation integration tests proving denial |
 | Observability | JSON logs with redaction, OTLP traces/metrics | — | — |
 | Contracts | Generated/reviewed OpenAPI snapshots, versioned JSON Schema events | — | Automated consumer/provider compatibility checks |
-| Cost accounting | Execution-level budget enforcement and totals | Deterministic runner reports zero cost | Append-only cost entries, token/tool-call granularity, org/project rollups |
+| Cost accounting | Execution-level budget enforcement and totals; input/cached/output token counts flow from agent adapters into execution events | Deterministic runner reports zero cost | Price catalog, monetary cost_minor beyond 0, org/project rollups |
 | Artifact storage | Metadata model | — | Durable object storage |
 
 Substitutes are labeled as such wherever they surface — `is_development_substitute` is

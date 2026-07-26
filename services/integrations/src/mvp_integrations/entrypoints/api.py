@@ -91,6 +91,21 @@ class SourceCredentialExchange(RequestModel):
     capability: str = Field(min_length=64, max_length=4096)
 
 
+class ModelCredentialWrite(RequestModel):
+    """A model-provider API key value, submitted once by an organization admin.
+
+    Write-only: this endpoint returns only a `SecretReference` (identifiers), never
+    the value back. Delivery's provider-configuration create endpoint takes that
+    reference, never a raw value.
+    """
+
+    value: str = Field(min_length=1, max_length=8192)
+
+
+class ModelCredentialExchange(RequestModel):
+    capability: str = Field(min_length=64, max_length=4096)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or Settings()
     configure_logging()
@@ -593,6 +608,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post(
+        "/api/v1/organizations/{organization_id}/model-credentials",
+        status_code=201,
+    )
+    async def create_model_credential(
+        organization_id: UUID,
+        payload: ModelCredentialWrite,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> dict[str, str]:
+        """Store a model-provider API key value once. Returns only a
+        `SecretReference` — the value is never echoed back or logged. An
+        organization admin submits this once per credential, then passes the
+        returned reference identifiers when creating a delivery provider
+        configuration with `authentication_mode: API_KEY_REFERENCE`.
+        """
+        await authorize(repo, organization_id, principal.subject, {"OWNER", "ADMIN"})
+        credential_id = uuid4()
+        reference = SecretReference(
+            store="encrypted-file",
+            namespace=f"model-credentials/{organization_id}",
+            key=str(credential_id),
+        )
+        secret_store = encrypted_secrets()
+        await secret_store.put(reference, payload.value.encode())
+        await repo.record_audit(
+            organization_id=organization_id,
+            actor_subject=principal.subject,
+            action="model_credential.created",
+            target_type="secret_reference",
+            target_id=credential_id,
+            details={
+                "store": reference.store,
+                "namespace": reference.namespace,
+                "key": reference.key,
+            },
+        )
+        return {
+            "store": reference.store,
+            "namespace": reference.namespace,
+            "key": reference.key,
+        }
+
+    @app.post(
         "/api/v1/organizations/{organization_id}/repositories/{repository_id}/pull-requests",
         status_code=201,
     )
@@ -817,6 +875,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "token": credential.token,
             "expires_at": credential.expires_at or "",
         }
+
+    @app.post("/internal/v1/model-credentials/exchange")
+    async def exchange_model_credential(
+        payload: ModelCredentialExchange,
+        repo: Repo,
+    ) -> dict[str, str]:
+        """Redeem a one-time, job-scoped capability (minted by delivery) for the
+        plaintext value of the model API key it names. Mirrors
+        `exchange_source_credential` exactly, on a distinct JWT audience so a
+        source capability and a model capability are never interchangeable.
+
+        Returns only `{"value": ...}` — no reference echo, no metadata. The caller
+        (the runner's `LeasedSecretResolver`, never the sandboxed agent process
+        itself) is expected to inject the value directly into a job container's
+        environment and never persist or log it.
+        """
+        try:
+            claims = jwt.decode(
+                payload.capability,
+                resolved.internal_service_token,
+                algorithms=["HS256"],
+                audience="mvp-integrations-model",
+                issuer="mvp-delivery",
+                options={
+                    "require": [
+                        "exp",
+                        "iat",
+                        "jti",
+                        "organization_id",
+                        "execution_id",
+                        "secret_reference",
+                        "purpose",
+                    ]
+                },
+            )
+            organization_id = UUID(str(claims["organization_id"]))
+            execution_id = UUID(str(claims["execution_id"]))
+            expires_at = datetime.fromtimestamp(int(claims["exp"]), tz=UTC)
+            reference = SecretReference(**dict(claims["secret_reference"]))
+        except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=401, detail="model capability is invalid") from error
+        if str(claims["purpose"]) != "MODEL_CREDENTIAL_READ":
+            raise HTTPException(status_code=401, detail="model capability purpose is invalid")
+        if not await repo.redeem_source_capability(organization_id, str(claims["jti"]), expires_at):
+            raise HTTPException(status_code=409, detail="model capability was already redeemed")
+        # A capability is only ever minted by delivery for a secret reference that
+        # belongs to this same organization (see `create_model_credential` above,
+        # which is the only place a `model-credentials/{organization_id}` namespace
+        # is created). Reject anything else outright rather than trusting the
+        # claim: this is the one guard standing between a forged/mismatched
+        # capability and reading another tenant's credential.
+        if reference.namespace != f"model-credentials/{organization_id}":
+            raise HTTPException(
+                status_code=403, detail="secret reference is not owned by this organization"
+            )
+        secret_store = encrypted_secrets()
+        value = (await secret_store.get(reference)).decode()
+        await repo.record_audit(
+            organization_id=organization_id,
+            actor_subject="runner",
+            action="model_credential.exchanged",
+            target_type="execution",
+            target_id=execution_id,
+            details={
+                "store": reference.store,
+                "namespace": reference.namespace,
+                "key": reference.key,
+            },
+        )
+        return {"value": value}
 
     return app
 

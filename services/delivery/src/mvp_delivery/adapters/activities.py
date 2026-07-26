@@ -16,6 +16,23 @@ from mvp_delivery.domain.models import (
 )
 from mvp_delivery.settings import Settings
 
+# Maps the runner's `AgentEventKind` (packages/contracts openapi: PLAN|TOOL|COMMAND|
+# RESULT|ERROR|APPROVAL|USAGE) onto delivery's own `ExecutionEventKind`. USAGE has no
+# dedicated member on `ExecutionEventKind` — it maps onto the existing, previously
+# unused `COST` member, which was already reserved for exactly this. An unrecognized
+# kind degrades to TOOL rather than raising: the HTTP layer's `AgentEventReport.kind`
+# regex already rejects a genuinely invalid value at the runner-completion boundary,
+# so this default is defence-in-depth, not a silent-fallback violation.
+AGENT_EVENT_KIND_MAP: dict[str, ExecutionEventKind] = {
+    "PLAN": ExecutionEventKind.PLAN,
+    "TOOL": ExecutionEventKind.TOOL,
+    "COMMAND": ExecutionEventKind.COMMAND,
+    "RESULT": ExecutionEventKind.RESULT,
+    "ERROR": ExecutionEventKind.ERROR,
+    "APPROVAL": ExecutionEventKind.APPROVAL,
+    "USAGE": ExecutionEventKind.COST,
+}
+
 
 class DeliveryActivities:
     def __init__(self, settings: Settings) -> None:
@@ -76,13 +93,17 @@ class DeliveryActivities:
                 await repository.update_execution(execution)
                 for item in list(agent.get("events", [])):
                     event = dict(item)
+                    kind = AGENT_EVENT_KIND_MAP.get(
+                        str(event.get("kind", "TOOL")), ExecutionEventKind.TOOL
+                    )
                     await self._event(
                         repository,
                         execution.id,
                         execution.organization_id,
-                        ExecutionEventKind(str(event.get("kind", "TOOL"))),
+                        kind,
                         str(event.get("name", "agent.event")),
                         str(event.get("message", "Agent emitted an event.")),
+                        metadata=dict(event.get("metadata") or {}),
                     )
                 await self._event(
                     repository,
@@ -171,6 +192,7 @@ class DeliveryActivities:
                     "execution_id": str(execution.id),
                     "organization_id": str(execution.organization_id),
                     "repository_connection_id": str(execution.repository_connection_id),
+                    "provider": configuration.provider,
                     "runtime": configuration.runtime,
                     "model": configuration.model,
                     "authentication_mode": configuration.authentication_mode.value,
@@ -243,6 +265,7 @@ class DeliveryActivities:
         kind: ExecutionEventKind,
         name: str,
         message: str,
+        metadata: dict[str, str | int | bool | None] | None = None,
     ) -> None:
         await repository.append_event(
             ExecutionEvent(
@@ -253,5 +276,6 @@ class DeliveryActivities:
                 kind=kind,
                 name=name,
                 message=message,
+                metadata=metadata or {},
             )
         )

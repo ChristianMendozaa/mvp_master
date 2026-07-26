@@ -15,6 +15,26 @@
             "title": "Message",
             "type": "string"
           },
+          "metadata": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Metadata",
+            "type": "object"
+          },
           "name": {
             "maxLength": 128,
             "minLength": 1,
@@ -39,6 +59,18 @@
       "AgentReport": {
         "additionalProperties": false,
         "properties": {
+          "cached_input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cached Input Tokens"
+          },
           "changed_paths": {
             "items": {
               "type": "string"
@@ -54,6 +86,42 @@
             "maxItems": 10000,
             "title": "Events",
             "type": "array"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
           },
           "success": {
             "title": "Success",
@@ -1685,6 +1753,83 @@
           }
         },
         "summary": "Heartbeat Runner Job"
+      }
+    },
+    "/runner/v1/jobs/{job_id}/model-capability": {
+      "post": {
+        "description": "Mint a short-lived, single-use capability the leased runner redeems\nagainst integrations' `/internal/v1/model-credentials/exchange` for the\nplaintext value of the job's model API key. Mirrors `source_capability`\nabove; a distinct JWT audience (`mvp-integrations-model`) keeps a model\ncapability from ever being redeemable as a source capability or vice\nversa. A job whose `authentication_mode` is not `API_KEY_REFERENCE`, or\nthat has no `secret_reference`, has nothing to mint a capability for.",
+        "operationId": "model_capability_runner_v1_jobs__job_id__model_capability_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Runner-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Runner-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Model Capability Runner V1 Jobs  Job Id  Model Capability Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Model Capability"
       }
     },
     "/runner/v1/jobs/{job_id}/source-capability": {

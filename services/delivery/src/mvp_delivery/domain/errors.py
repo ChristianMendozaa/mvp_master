@@ -16,3 +16,7 @@ class RunnerUnavailable(DeliveryError):
 
 class InvalidEnrollment(DeliveryError):
     code = "invalid_enrollment"
+
+
+class UnsupportedProviderConfiguration(DeliveryError):
+    code = "unsupported_provider_configuration"

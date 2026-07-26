@@ -4,7 +4,7 @@ This document is updated with each increment and is the source of truth for prod
 
 ## Current
 
-- Durable root engineering instructions, service ownership rules, and seven ADRs.
+- Durable root engineering instructions, service ownership rules, and nine ADRs.
 - A locked Python/pnpm monorepo with strict lint, format, type, unit-test, contract,
   Compose-validation, build, and dependency-audit gates.
 - Local Keycloak OIDC Authorization Code + PKCE login, HTTP-only token cookies, a
@@ -16,9 +16,26 @@ This document is updated with each increment and is the source of truth for prod
   references, tenant installation proof, paginated reconciliation, signed webhooks,
   ephemeral repository credentials, clone/push/PR, and verification check runs.
 - Provider configuration that keeps provider, runtime, model, authentication mode,
-  and secret reference explicit. The deterministic runtime is runnable. A Codex CLI
-  adapter exists but its binary/session and secret resolver are not packaged in the
-  local job image.
+  and secret reference explicit, validated against a reviewed compatibility table
+  (`services/delivery/.../domain/agent_runtimes.py`) at create time. Four runnable
+  agent runtimes: `deterministic` (development substitute), `codex-cli` (Codex CLI,
+  both API-key and ChatGPT-subscription auth — also serves the Codex SDK, which
+  wraps the same binary), `claude-code-cli` (Claude Code CLI, both API-key and
+  Claude-subscription auth, and — via a reviewed provider catalog — Anthropic-
+  compatible third-party providers including Zhipu GLM and Moonshot Kimi), and
+  `claude-agent-sdk` (the Python Claude Agent SDK, API-key only per Anthropic's
+  terms). All four are packaged in the job image (Node.js + `claude`/`codex` CLIs +
+  `claude-agent-sdk`).
+- A model-credential lease mirroring the Git source-credential flow: a short-lived,
+  single-use, job-scoped capability minted by delivery and redeemed once by the
+  runner daemon (never the sandboxed agent process) against the existing encrypted
+  file secret store; the resolved value is injected only as a job-container
+  environment variable.
+- Scoped model-provider network egress: real-agent job containers get network access
+  restricted to exactly one allowlisted provider host via a fail-closed internal
+  Docker network and CONNECT proxy, off by default
+  (`AGENT_EGRESS_ENABLED=false`) and never applied to `deterministic` or the
+  validator container.
 - One-use runner enrollment, hashed runner credentials, expiring/heartbeat-backed
   job leases, a constrained Docker job container, a separate read-only/no-network
   validation container, bounded repair, and cleanup.
@@ -34,16 +51,35 @@ This document is updated with each increment and is the source of truth for prod
 ## Explicitly not production-complete in this slice
 
 - Managed cloud infrastructure and hardened sandbox runtime.
-- Claude/Anthropic adapters, provider fallback and enterprise provider policy.
+- Live-credential CI certification for any real agent runtime (`codex-cli`,
+  `claude-code-cli`, `claude-agent-sdk`) — the adapters and their unit tests never
+  use live credentials or network, matching AGENTS.md, and no automated pipeline
+  runs them against a real provider account.
+- Agent-runtime session resume and an approval round-trip (`supports_resume` /
+  `supports_approval` are honestly reported as unsupported on every real runtime in
+  this increment; only `codex-cli` advertises both but the mapping is best-effort).
+- Provider fallback and enterprise provider policy (never silently substituting a
+  provider, model, or auth mode — see AGENTS.md — is enforced; automatic fallback
+  between providers is not implemented).
+- An enterprise-grade secret store (KMS/HSM/Vault-backed). Model and source
+  credentials both use the same encrypted-file store; the credential-lease
+  *mechanism* (short-lived, single-use, job-scoped capabilities) is implemented for
+  both, but the underlying store is still the local encrypted-file adapter.
 - Anonymous or magic-link client intake.
 - Preview-provider deployment.
-- Enterprise secret-store resolution and credential leases.
 - GitHub Enterprise Server, Issue/comment intake, forks, submodules, LFS, workflow
   file changes, automatic merge, and a managed enterprise secret store.
-- Durable artifact-object storage and full token/tool-call/price-catalog accounting.
+- Durable artifact-object storage and a price catalog. Token counts (input/cached/
+  output) now flow from agent adapters through to execution events; monetary
+  `cost_minor` is still hardcoded to 0 pending a price catalog.
 - Execution-level PostgreSQL/Temporal replay tests and a continuously exercised
   Compose/Playwright path in CI. The complete path is checked in and has been
   exercised locally, but is not yet a CI job.
 - Live third-party certification tests without operator-supplied credentials.
 
-The local connector and deterministic agent are development substitutes and must be labeled as such in APIs, UI, logs and documentation.
+The local connector and deterministic agent are development substitutes and must be
+labeled as such in APIs, UI, logs and documentation. Real agent runtimes
+(`codex-cli`, `claude-code-cli`, `claude-agent-sdk`) require both an
+organization-submitted model credential and `AGENT_EGRESS_ENABLED=true` on the
+runner — neither is on by default, and a job that requests a real runtime without
+both fails loudly rather than silently falling back to a substitute.
