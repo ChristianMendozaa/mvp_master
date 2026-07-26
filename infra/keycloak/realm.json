@@ -24,6 +24,18 @@
             "included.custom.audience": "mvp-api",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "mvp-platform-operator",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "mvp_master_platform_operator",
+            "claim.name": "mvp_master_platform_operator",
+            "jsonType.label": "boolean",
+            "access.token.claim": "true",
+            "id.token.claim": "true"
+          }
         }
       ]
     }
@@ -37,6 +49,9 @@
       "enabled": true,
       "firstName": "Local",
       "lastName": "Owner",
+      "attributes": {
+        "mvp_master_platform_operator": ["true"]
+      },
       "credentials": [{"type": "password", "value": "local-owner-only", "temporary": false}]
     },
     {

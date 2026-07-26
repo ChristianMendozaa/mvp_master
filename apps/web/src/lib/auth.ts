@@ -23,6 +23,7 @@ export type BrowserSession = {
   email?: string;
   name?: string;
   expiresAt: number;
+  isPlatformOperator: boolean;
 };
 
 export function decodeAccessToken(token: string): BrowserSession | null {
@@ -35,6 +36,7 @@ export function decodeAccessToken(token: string): BrowserSession | null {
         email: z.string().optional(),
         name: z.string().optional(),
         exp: z.number(),
+        mvp_master_platform_operator: z.boolean().optional(),
       })
       .parse(JSON.parse(Buffer.from(part, "base64url").toString("utf8")));
     return {
@@ -42,6 +44,7 @@ export function decodeAccessToken(token: string): BrowserSession | null {
       email: claims.email,
       name: claims.name,
       expiresAt: claims.exp,
+      isPlatformOperator: claims.mvp_master_platform_operator === true,
     };
   } catch {
     return null;

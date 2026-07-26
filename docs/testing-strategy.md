@@ -1,5 +1,11 @@
 # Testing strategy
 
+Infrastructure-backed integrations tests use synthetic service credentials. Set
+`INTEGRATIONS_TEST_DATABASE_URL` to a migrated integrations database using the
+non-superuser integrations role before running `make test-integration`; without it,
+the RLS test is reported as explicitly skipped rather than contacting an arbitrary
+local database.
+
 ## Implemented gates
 
 - Pure domain and in-memory application tests cover lifecycle invariants,
@@ -17,8 +23,8 @@
 
 ## Required next tests
 
-- PostgreSQL tests that prove RLS denial across two tenants and verify outbox/inbox
-  crash recovery.
+- Additional PostgreSQL RLS coverage for every tenant table plus outbox/inbox crash
+  recovery.
 - Temporal replay, worker-restart, retry, approval-signal, and cancellation tests.
 - Runner attacks covering symlinks, malicious Git configuration, output redaction,
   container timeout, resource limits, and denied egress.

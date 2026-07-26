@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
@@ -9,14 +9,77 @@ from sqlalchemy.sql import select, text
 
 from mvp_integrations.application.ports import IntegrationRepository
 from mvp_integrations.domain.models import (
+    ConfigurationHealth,
     ConnectorInstallation,
     InstallationStatus,
+    RepositoryAccessStatus,
     RepositoryConnection,
+    SourceControlConfiguration,
+    WebhookMode,
 )
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class SourceControlConfigurationRow(Base):
+    __tablename__ = "source_control_configurations"
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    provider: Mapped[str] = mapped_column(String(64))
+    web_base_url: Mapped[str] = mapped_column(String(512))
+    api_base_url: Mapped[str] = mapped_column(String(512))
+    api_version: Mapped[str] = mapped_column(String(32))
+    app_id: Mapped[str] = mapped_column(String(64))
+    client_id: Mapped[str] = mapped_column(String(256))
+    app_slug: Mapped[str] = mapped_column(String(256))
+    private_key_reference: Mapped[dict[str, str | None]] = mapped_column(JSON)
+    client_secret_reference: Mapped[dict[str, str | None]] = mapped_column(JSON)
+    webhook_secret_reference: Mapped[dict[str, str | None]] = mapped_column(JSON)
+    webhook_mode: Mapped[str] = mapped_column(String(32))
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    health: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PlatformAuditRow(Base):
+    __tablename__ = "platform_audit_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_subject: Mapped[str] = mapped_column(String(300))
+    action: Mapped[str] = mapped_column(String(128))
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True))
+    details: Mapped[dict[str, object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class PlatformSetupAttemptRow(Base):
+    __tablename__ = "platform_setup_attempts"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_subject: Mapped[str] = mapped_column(String(300))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConnectorSetupAttemptRow(Base):
+    __tablename__ = "connector_setup_attempts"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    actor_subject: Mapped[str] = mapped_column(String(300))
+    configuration_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SourceCapabilityRedemptionRow(Base):
+    __tablename__ = "source_capability_redemptions"
+    capability_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    redeemed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class InstallationRow(Base):
@@ -28,6 +91,10 @@ class InstallationRow(Base):
     account_login: Mapped[str] = mapped_column(String(256))
     requested_permissions: Mapped[list[str]] = mapped_column(JSON)
     is_development_substitute: Mapped[bool] = mapped_column(Boolean)
+    provider_configuration_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    granted_permissions: Mapped[list[str]] = mapped_column(JSON)
+    repository_selection: Mapped[str] = mapped_column(String(32))
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -63,6 +130,9 @@ class RepositoryRow(Base):
     clone_locator: Mapped[str] = mapped_column(Text)
     is_private: Mapped[bool] = mapped_column(Boolean)
     is_development_substitute: Mapped[bool] = mapped_column(Boolean)
+    access_status: Mapped[str] = mapped_column(String(32))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -107,6 +177,174 @@ class InboxRow(Base):
 class PostgresIntegrationRepository(IntegrationRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def create_platform_setup_attempt(
+        self, state_hash: str, actor_subject: str, expires_at: datetime
+    ) -> None:
+        self._session.add(
+            PlatformSetupAttemptRow(
+                state_hash=state_hash,
+                actor_subject=actor_subject,
+                expires_at=expires_at,
+                used_at=None,
+            )
+        )
+
+    async def consume_platform_setup_attempt(
+        self, state_hash: str, actor_subject: str, now: datetime
+    ) -> bool:
+        row = await self._session.scalar(
+            select(PlatformSetupAttemptRow)
+            .where(PlatformSetupAttemptRow.state_hash == state_hash)
+            .with_for_update()
+        )
+        if (
+            row is None
+            or row.actor_subject != actor_subject
+            or row.used_at is not None
+            or row.expires_at <= now
+        ):
+            return False
+        row.used_at = datetime.now(UTC)
+        return True
+
+    async def create_connector_setup_attempt(
+        self,
+        organization_id: UUID,
+        state_hash: str,
+        actor_subject: str,
+        configuration_id: UUID,
+        expires_at: datetime,
+    ) -> None:
+        await self.set_organization(organization_id)
+        self._session.add(
+            ConnectorSetupAttemptRow(
+                state_hash=state_hash,
+                organization_id=organization_id,
+                actor_subject=actor_subject,
+                configuration_id=configuration_id,
+                expires_at=expires_at,
+                used_at=None,
+            )
+        )
+
+    async def consume_connector_setup_attempt(
+        self,
+        organization_id: UUID,
+        state_hash: str,
+        actor_subject: str,
+        now: datetime,
+    ) -> UUID | None:
+        await self.set_organization(organization_id)
+        row = await self._session.scalar(
+            select(ConnectorSetupAttemptRow)
+            .where(ConnectorSetupAttemptRow.state_hash == state_hash)
+            .with_for_update()
+        )
+        if (
+            row is None
+            or row.organization_id != organization_id
+            or row.actor_subject != actor_subject
+            or row.used_at is not None
+            or row.expires_at <= now
+        ):
+            return None
+        row.used_at = datetime.now(UTC)
+        return row.configuration_id
+
+    async def redeem_source_capability(
+        self,
+        organization_id: UUID,
+        capability_id: str,
+        expires_at: datetime,
+    ) -> bool:
+        await self.set_organization(organization_id)
+        existing = await self._session.get(SourceCapabilityRedemptionRow, capability_id)
+        if existing:
+            return False
+        self._session.add(
+            SourceCapabilityRedemptionRow(
+                capability_id=capability_id,
+                organization_id=organization_id,
+                expires_at=expires_at,
+                redeemed_at=datetime.now(UTC),
+            )
+        )
+        return True
+
+    async def add_source_control_configuration(
+        self, configuration: SourceControlConfiguration
+    ) -> None:
+        self._session.add(
+            SourceControlConfigurationRow(
+                id=configuration.id,
+                display_name=configuration.display_name,
+                provider=configuration.provider,
+                web_base_url=configuration.web_base_url,
+                api_base_url=configuration.api_base_url,
+                api_version=configuration.api_version,
+                app_id=configuration.app_id,
+                client_id=configuration.client_id,
+                app_slug=configuration.app_slug,
+                private_key_reference=configuration.private_key_reference,
+                client_secret_reference=configuration.client_secret_reference,
+                webhook_secret_reference=configuration.webhook_secret_reference,
+                webhook_mode=configuration.webhook_mode.value,
+                enabled=configuration.enabled,
+                health=configuration.health.value,
+                created_at=configuration.created_at,
+            )
+        )
+
+    async def get_source_control_configuration(
+        self, configuration_id: UUID
+    ) -> SourceControlConfiguration | None:
+        row = await self._session.get(SourceControlConfigurationRow, configuration_id)
+        return self._configuration(row) if row else None
+
+    async def source_control_configuration_for_app_id(
+        self, provider: str, app_id: str
+    ) -> SourceControlConfiguration | None:
+        row = await self._session.scalar(
+            select(SourceControlConfigurationRow).where(
+                SourceControlConfigurationRow.provider == provider,
+                SourceControlConfigurationRow.app_id == app_id,
+            )
+        )
+        return self._configuration(row) if row else None
+
+    async def list_source_control_configurations(
+        self,
+    ) -> tuple[SourceControlConfiguration, ...]:
+        rows = (await self._session.scalars(select(SourceControlConfigurationRow))).all()
+        return tuple(self._configuration(row) for row in rows)
+
+    async def update_source_control_configuration_health(
+        self, configuration_id: UUID, health: str, enabled: bool
+    ) -> None:
+        row = await self._session.get(SourceControlConfigurationRow, configuration_id)
+        if row:
+            row.health = health
+            row.enabled = enabled
+
+    async def record_platform_audit(
+        self,
+        *,
+        actor_subject: str,
+        action: str,
+        target_type: str,
+        target_id: UUID,
+        details: dict[str, object],
+    ) -> None:
+        self._session.add(
+            PlatformAuditRow(
+                actor_subject=actor_subject,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                details=details,
+            )
+        )
 
     async def set_organization(self, organization_id: UUID) -> None:
         await self._session.execute(
@@ -167,6 +405,10 @@ class PostgresIntegrationRepository(IntegrationRepository):
                 account_login=installation.account_login,
                 requested_permissions=list(installation.requested_permissions),
                 is_development_substitute=installation.is_development_substitute,
+                provider_configuration_id=installation.provider_configuration_id,
+                granted_permissions=list(installation.granted_permissions),
+                repository_selection=installation.repository_selection,
+                last_reconciled_at=installation.last_reconciled_at,
                 status=installation.status.value,
                 created_at=installation.created_at,
             )
@@ -200,6 +442,30 @@ class PostgresIntegrationRepository(IntegrationRepository):
         )
         return value
 
+    async def installation_for_external(
+        self, organization_id: UUID, provider: str, external_account_id: str
+    ) -> ConnectorInstallation | None:
+        await self.set_organization(organization_id)
+        row = await self._session.scalar(
+            select(InstallationRow).where(
+                InstallationRow.organization_id == organization_id,
+                InstallationRow.provider == provider,
+                InstallationRow.external_account_id == external_account_id,
+            )
+        )
+        return self._installation(row) if row else None
+
+    async def list_installation_routes(self) -> tuple[tuple[UUID, UUID], ...]:
+        rows = (
+            await self._session.execute(
+                select(
+                    InstallationRoutingRow.organization_id,
+                    InstallationRoutingRow.installation_id,
+                )
+            )
+        ).all()
+        return tuple((row.organization_id, row.installation_id) for row in rows)
+
     async def update_installation(self, installation: ConnectorInstallation) -> None:
         await self.set_organization(installation.organization_id)
         row = await self._session.get(InstallationRow, installation.id)
@@ -220,9 +486,51 @@ class PostgresIntegrationRepository(IntegrationRepository):
                 clone_locator=repository.clone_locator,
                 is_private=repository.is_private,
                 is_development_substitute=repository.is_development_substitute,
+                access_status=repository.access_status.value,
+                last_seen_at=repository.last_seen_at,
+                revoked_at=repository.revoked_at,
                 created_at=repository.created_at,
             )
         )
+
+    async def upsert_repository(self, repository: RepositoryConnection) -> None:
+        await self.set_organization(repository.organization_id)
+        row = await self._session.scalar(
+            select(RepositoryRow).where(
+                RepositoryRow.organization_id == repository.organization_id,
+                RepositoryRow.installation_id == repository.installation_id,
+                RepositoryRow.external_repository_id == repository.external_repository_id,
+            )
+        )
+        if row is None:
+            await self.add_repository(repository)
+            return
+        row.owner = repository.owner
+        row.name = repository.name
+        row.default_branch = repository.default_branch
+        row.clone_locator = repository.clone_locator
+        row.is_private = repository.is_private
+        row.access_status = repository.access_status.value
+        row.last_seen_at = repository.last_seen_at
+        row.revoked_at = repository.revoked_at
+
+    async def revoke_repositories_except(
+        self,
+        organization_id: UUID,
+        installation_id: UUID,
+        active_external_ids: set[str],
+        revoked_at: datetime,
+    ) -> None:
+        await self.set_organization(organization_id)
+        rows = (
+            await self._session.scalars(
+                select(RepositoryRow).where(RepositoryRow.installation_id == installation_id)
+            )
+        ).all()
+        for row in rows:
+            if row.external_repository_id not in active_external_ids:
+                row.access_status = RepositoryAccessStatus.REVOKED.value
+                row.revoked_at = revoked_at
 
     async def get_repository(
         self, organization_id: UUID, repository_id: UUID
@@ -292,6 +600,27 @@ class PostgresIntegrationRepository(IntegrationRepository):
         )
 
     @staticmethod
+    def _configuration(row: SourceControlConfigurationRow) -> SourceControlConfiguration:
+        return SourceControlConfiguration(
+            id=row.id,
+            display_name=row.display_name,
+            provider=row.provider,
+            web_base_url=row.web_base_url,
+            api_base_url=row.api_base_url,
+            api_version=row.api_version,
+            app_id=row.app_id,
+            client_id=row.client_id,
+            app_slug=row.app_slug,
+            private_key_reference=row.private_key_reference,
+            client_secret_reference=row.client_secret_reference,
+            webhook_secret_reference=row.webhook_secret_reference,
+            webhook_mode=WebhookMode(row.webhook_mode),
+            enabled=row.enabled,
+            health=ConfigurationHealth(row.health),
+            created_at=row.created_at,
+        )
+
+    @staticmethod
     def _installation(row: InstallationRow) -> ConnectorInstallation:
         return ConnectorInstallation(
             id=row.id,
@@ -301,6 +630,10 @@ class PostgresIntegrationRepository(IntegrationRepository):
             account_login=row.account_login,
             requested_permissions=tuple(row.requested_permissions),
             is_development_substitute=row.is_development_substitute,
+            provider_configuration_id=row.provider_configuration_id,
+            granted_permissions=tuple(row.granted_permissions),
+            repository_selection=row.repository_selection,
+            last_reconciled_at=row.last_reconciled_at,
             status=InstallationStatus(row.status),
             created_at=row.created_at,
         )
@@ -318,5 +651,8 @@ class PostgresIntegrationRepository(IntegrationRepository):
             clone_locator=row.clone_locator,
             is_private=row.is_private,
             is_development_substitute=row.is_development_substitute,
+            access_status=RepositoryAccessStatus(row.access_status),
+            last_seen_at=row.last_seen_at,
+            revoked_at=row.revoked_at,
             created_at=row.created_at,
         )

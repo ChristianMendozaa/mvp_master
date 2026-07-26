@@ -48,6 +48,13 @@ type Provider = {
   model: string;
   is_development_substitute: boolean;
 };
+type SourceControlConfiguration = {
+  id: string;
+  display_name: string;
+  provider: string;
+  app_slug: string;
+  webhook_mode: string;
+};
 type RunnerPool = { id: string; name: string; runner_type: string };
 type Execution = {
   id: string;
@@ -108,6 +115,9 @@ export function ControlPlane({
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [sourceConfigurations, setSourceConfigurations] = useState<
+    SourceControlConfiguration[]
+  >([]);
   const [pools, setPools] = useState<RunnerPool[]>([]);
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -123,33 +133,57 @@ export function ControlPlane({
 
   const reload = useCallback(async () => {
     if (!organizationId) return;
-    const [control, repos, providerData, poolData, executionData] =
-      await Promise.all([
-        api<Dashboard>("control", `organizations/${organizationId}/dashboard`),
-        api<Repository[]>(
-          "integrations",
-          `organizations/${organizationId}/repositories`,
-        ),
-        api<Provider[]>(
-          "delivery",
-          `organizations/${organizationId}/provider-configurations`,
-        ),
-        api<RunnerPool[]>(
-          "delivery",
-          `organizations/${organizationId}/runner-pools`,
-        ),
-        api<Execution[]>(
-          "delivery",
-          `organizations/${organizationId}/executions`,
-        ),
-      ]);
+    const [
+      control,
+      repos,
+      providerData,
+      poolData,
+      executionData,
+      sourceConfigurationData,
+    ] = await Promise.all([
+      api<Dashboard>("control", `organizations/${organizationId}/dashboard`),
+      api<Repository[]>(
+        "integrations",
+        `organizations/${organizationId}/repositories`,
+      ),
+      api<Provider[]>(
+        "delivery",
+        `organizations/${organizationId}/provider-configurations`,
+      ),
+      api<RunnerPool[]>(
+        "delivery",
+        `organizations/${organizationId}/runner-pools`,
+      ),
+      api<Execution[]>(
+        "delivery",
+        `organizations/${organizationId}/executions`,
+      ),
+      api<SourceControlConfiguration[]>(
+        "integrations",
+        `organizations/${organizationId}/source-control-configurations`,
+      ).catch(() => []),
+    ]);
     setDashboard(control);
     setRepositories(repos);
     setProviders(providerData);
     setPools(poolData);
     setExecutions(executionData);
+    setSourceConfigurations(sourceConfigurationData);
     setSelectedExecution((current) => current || executionData[0]?.id || "");
   }, [organizationId]);
+
+  async function installGitHub(configurationId: string): Promise<void> {
+    const result = await api<{ installation_url: string; state: string }>(
+      "integrations",
+      `organizations/${organizationId}/github/installations`,
+      {
+        method: "POST",
+        body: JSON.stringify({ configuration_id: configurationId }),
+      },
+    );
+    window.sessionStorage.setItem("mvp_github_organization_id", organizationId);
+    window.location.assign(result.installation_url);
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -279,7 +313,9 @@ export function ControlPlane({
   );
   const readyChoices = useMemo(
     () => ({
-      repository: repositories[0],
+      repository:
+        repositories.find((item) => !item.is_development_substitute) ??
+        repositories[0],
       provider: providers[0],
       pool: pools[0],
     }),
@@ -305,6 +341,9 @@ export function ControlPlane({
         </div>
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
           <span className="muted">{session.email ?? session.subject}</span>
+          {session.isPlatformOperator ? (
+            <a href="/app/admin/integrations/github">GitHub settings</a>
+          ) : null}
           <form action="/api/auth/logout" method="post">
             <button className="secondary" type="submit">
               Sign out
@@ -539,7 +578,17 @@ export function ControlPlane({
           </p>
           {readyChoices.repository ? (
             <p>
-              <span className="status local">Local substitute</span>{" "}
+              <span
+                className={
+                  readyChoices.repository.is_development_substitute
+                    ? "status local"
+                    : "status"
+                }
+              >
+                {readyChoices.repository.is_development_substitute
+                  ? "Local substitute"
+                  : "GitHub"}
+              </span>{" "}
               {readyChoices.repository.owner}/{readyChoices.repository.name}
             </p>
           ) : (
@@ -564,6 +613,19 @@ export function ControlPlane({
               Connect simulated GitHub App
             </button>
           )}
+          {sourceConfigurations.map((configuration) => (
+            <button
+              className="secondary"
+              key={configuration.id}
+              onClick={() =>
+                void action("github-installation", () =>
+                  installGitHub(configuration.id),
+                )
+              }
+            >
+              Connect {configuration.display_name}
+            </button>
+          ))}
           {dashboard?.work_items.map((item) => (
             <article
               key={item.id}

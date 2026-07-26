@@ -5,6 +5,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
   "alembic>=1.16.0,<2",
   "asyncpg>=0.30.0,<1",
+  "cryptography>=45.0.0,<47",
   "fastapi>=0.116.0,<1",
   "httpx>=0.28.0,<1",
   "mvp-common",

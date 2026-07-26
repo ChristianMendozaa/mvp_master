@@ -12,6 +12,13 @@ Roles:
 - `REVIEWER`: specification, work-item, plan, budget and delivery approvals.
 - `CLIENT`: create and view authorized intake, answer clarification, and approve assigned specification versions; no repository, execution internals, organization cost or audit access.
 
+Deployment-wide integration credentials are outside tenant roles. The GitHub App
+registration wizard requires the server-validated
+`mvp_master_platform_operator=true` OIDC claim. The checked-in local realm grants it
+only to the synthetic owner. A tenant `OWNER` without this claim may install an
+already configured App for its organization, but cannot view or replace global App
+configuration.
+
 Implemented security-sensitive commands append the actor subject, organization,
 action, target type/ID, and redacted details to the owning service's audit table.
 Correlation, source IP, and user-agent fields are not yet populated consistently and

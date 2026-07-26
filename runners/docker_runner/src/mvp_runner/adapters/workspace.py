@@ -26,7 +26,16 @@ class LocalWorkspaceManager:
         await asyncio.to_thread(shutil.copytree, self._fixture, path, symlinks=False)
         return path
 
-    async def cleanup(self, execution_id: str) -> None:
+    async def provision_empty(self, execution_id: str) -> tuple[Path, Path]:
         path = self._path(execution_id)
-        if path.exists():
-            await asyncio.to_thread(shutil.rmtree, path)
+        metadata = self._path(f"{execution_id}-git")
+        for candidate in (path, metadata):
+            if candidate.exists():
+                await asyncio.to_thread(shutil.rmtree, candidate)
+        await asyncio.to_thread(path.mkdir, mode=0o700, parents=True)
+        return path, metadata
+
+    async def cleanup(self, execution_id: str) -> None:
+        for path in (self._path(execution_id), self._path(f"{execution_id}-git")):
+            if path.exists():
+                await asyncio.to_thread(shutil.rmtree, path)

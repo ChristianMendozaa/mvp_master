@@ -17,6 +17,7 @@ class LocalSourceControl:
     def __init__(self) -> None:
         self.pull_requests: dict[str, PullRequestResult] = {}
         self.comments: list[dict[str, str]] = []
+        self.check_runs: dict[str, dict[str, str]] = {}
 
     async def repositories(self, external_account_id: str) -> tuple[RepositoryDescriptor, ...]:
         return (
@@ -78,4 +79,24 @@ class LocalSourceControl:
                 "idempotency_key": idempotency_key,
                 "comment_id": str(uuid4()),
             }
+        )
+
+    async def create_check_run(
+        self,
+        *,
+        installation: ConnectorInstallation,
+        repository: RepositoryConnection,
+        head_sha: str,
+        name: str,
+        summary: str,
+        idempotency_key: str,
+    ) -> None:
+        self.check_runs.setdefault(
+            idempotency_key,
+            {
+                "repository": repository.full_name,
+                "head_sha": head_sha,
+                "name": name,
+                "summary": summary,
+            },
         )

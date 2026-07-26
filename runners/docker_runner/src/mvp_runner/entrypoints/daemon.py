@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import os
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -8,7 +11,11 @@ from typing import Any
 import httpx
 from mvp_common.logging import configure_logging
 
-from mvp_runner.adapters.control_client import RunnerControlClient, RunnerIdentity
+from mvp_runner.adapters.control_client import (
+    RunnerControlClient,
+    RunnerIdentity,
+    SourceCredentialClient,
+)
 from mvp_runner.adapters.docker_agent import DockerAgentExecutor
 from mvp_runner.adapters.docker_validator import DockerValidator
 from mvp_runner.adapters.workspace import LocalWorkspaceManager
@@ -18,32 +25,92 @@ from mvp_runner.settings import Settings
 LOGGER = logging.getLogger(__name__)
 
 
-async def git(workspace: Path, *arguments: str) -> str:
-    process = await asyncio.create_subprocess_exec(
-        "git",
-        "-C",
-        str(workspace),
-        *arguments,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "GIT_AUTHOR_NAME": "MVP Master Agent",
-            "GIT_AUTHOR_EMAIL": "agent@mvp-master.invalid",
-            "GIT_COMMITTER_NAME": "MVP Master Agent",
-            "GIT_COMMITTER_EMAIL": "agent@mvp-master.invalid",
-        },
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        raise RuntimeError(stderr.decode(errors="replace")[-4000:])
-    return stdout.decode().strip()
+async def git(
+    workspace: Path,
+    *arguments: str,
+    metadata: Path | None = None,
+    credential: dict[str, str] | None = None,
+) -> str:
+    environment = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "GIT_AUTHOR_NAME": "MVP Master Agent",
+        "GIT_AUTHOR_EMAIL": "agent@mvp-master.invalid",
+        "GIT_COMMITTER_NAME": "MVP Master Agent",
+        "GIT_COMMITTER_EMAIL": "agent@mvp-master.invalid",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_LFS_SKIP_SMUDGE": "1",
+    }
+    askpass_root: Path | None = None
+    if credential:
+        askpass_root = Path(tempfile.mkdtemp(prefix="mvp-git-askpass-"))
+        askpass = askpass_root / "askpass"
+        askpass.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            "  *Username*) printf '%s' \"$MVP_GIT_USERNAME\" ;;\n"
+            "  *) printf '%s' \"$MVP_GIT_TOKEN\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        askpass.chmod(0o700)
+        environment.update(
+            {
+                "GIT_ASKPASS": str(askpass),
+                "MVP_GIT_USERNAME": credential["username"],
+                "MVP_GIT_TOKEN": credential["token"],
+            }
+        )
+    command = ["git"]
+    if metadata is None:
+        command.extend(["-C", str(workspace)])
+    else:
+        command.extend(["--git-dir", str(metadata), "--work-tree", str(workspace)])
+    command.extend(arguments)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=environment,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace")[-4000:])
+        return stdout.decode().strip()
+    finally:
+        if askpass_root:
+            await asyncio.to_thread(shutil.rmtree, askpass_root)
 
 
 async def initialize_repository(workspace: Path) -> None:
     await git(workspace, "init", "--initial-branch=main")
     await git(workspace, "add", "--all")
     await git(workspace, "commit", "-m", "chore: initialize isolated fixture")
+
+
+async def clone_repository(
+    *,
+    workspace: Path,
+    metadata: Path,
+    credential: dict[str, str],
+) -> str:
+    await asyncio.to_thread(workspace.rmdir)
+    await git(
+        workspace.parent,
+        "clone",
+        "--no-recurse-submodules",
+        "--single-branch",
+        "--branch",
+        credential["default_branch"],
+        "--separate-git-dir",
+        str(metadata),
+        credential["clone_locator"],
+        str(workspace),
+        credential=credential,
+    )
+    await git(workspace, "config", "core.hooksPath", os.devnull, metadata=metadata)
+    return await git(workspace, "rev-parse", "HEAD", metadata=metadata)
 
 
 async def run_job(
@@ -53,14 +120,32 @@ async def run_job(
     agent: DockerAgentExecutor,
     validator: DockerValidator,
     workspaces: LocalWorkspaceManager,
+    identity: RunnerIdentity,
+    control: RunnerControlClient,
+    source: SourceCredentialClient,
 ) -> dict[str, Any]:
     started = time.monotonic()
     execution_id = str(job["execution_id"])
-    workspace = await workspaces.provision(execution_id)
+    connected_repository = bool(job.get("repository_connection_id"))
+    metadata: Path | None = None
+    source_credential: dict[str, str] | None = None
+    if connected_repository:
+        capability = await control.source_capability(identity, str(job["job_id"]), "CHECKOUT_READ")
+        source_credential = await source.exchange(capability)
+        connected_repository = source_credential.get("development_substitute") != "true"
+    if connected_repository and source_credential:
+        workspace, metadata = await workspaces.provision_empty(execution_id)
+        base_sha = await clone_repository(
+            workspace=workspace, metadata=metadata, credential=source_credential
+        )
+    else:
+        workspace = await workspaces.provision(execution_id)
+        base_sha = ""
     exchange = settings.workspace_root / f"{execution_id}-exchange"
     exchange.mkdir(mode=0o700, parents=True, exist_ok=False)
     try:
-        await initialize_repository(workspace)
+        if not connected_repository:
+            await initialize_repository(workspace)
         (exchange / "input.json").write_text(
             json.dumps(job, separators=(",", ":")), encoding="utf-8"
         )
@@ -81,15 +166,74 @@ async def run_job(
         commit_sha = "0" * 40
         patch = ""
         if bool(agent_result["success"]) and validation.passed:
-            await git(workspace, "add", "--all")
+            await git(workspace, "add", "--all", metadata=metadata)
+            changed_paths = (
+                await git(workspace, "diff", "--cached", "--name-only", metadata=metadata)
+            ).splitlines()
+            if any(path.startswith(".github/workflows/") for path in changed_paths):
+                raise RuntimeError("changes to GitHub workflow files are not permitted")
             await git(
                 workspace,
                 "commit",
                 "-m",
                 f"feat: implement approved work item\n\nExecution: {execution_id}",
+                metadata=metadata,
             )
-            commit_sha = await git(workspace, "rev-parse", "HEAD")
-            patch = await git(workspace, "format-patch", "-1", "--stdout", "HEAD")
+            if connected_repository and metadata and source_credential:
+                for _ in range(2):
+                    capability = await control.source_capability(
+                        identity, str(job["job_id"]), "CHECKOUT_READ"
+                    )
+                    read_credential = await source.exchange(capability)
+                    await git(
+                        workspace,
+                        "fetch",
+                        "--no-tags",
+                        "origin",
+                        read_credential["default_branch"],
+                        metadata=metadata,
+                        credential=read_credential,
+                    )
+                    remote_sha = await git(
+                        workspace,
+                        "rev-parse",
+                        f"origin/{read_credential['default_branch']}",
+                        metadata=metadata,
+                    )
+                    if remote_sha == base_sha:
+                        break
+                    await git(
+                        workspace,
+                        "rebase",
+                        f"origin/{read_credential['default_branch']}",
+                        metadata=metadata,
+                    )
+                    validation = await validator.validate(workspace=workspace, commands=commands)
+                    if not validation.passed:
+                        raise RuntimeError("validation failed after rebasing onto the latest base")
+                    base_sha = remote_sha
+                capability = await control.source_capability(
+                    identity, str(job["job_id"]), "PUBLISH_WRITE"
+                )
+                write_credential = await source.exchange(capability)
+                branch = f"mvp-master/executions/{execution_id}"
+                await git(
+                    workspace,
+                    "push",
+                    "origin",
+                    f"HEAD:refs/heads/{branch}",
+                    metadata=metadata,
+                    credential=write_credential,
+                )
+            commit_sha = await git(workspace, "rev-parse", "HEAD", metadata=metadata)
+            patch = await git(
+                workspace,
+                "format-patch",
+                "-1",
+                "--stdout",
+                "HEAD",
+                metadata=metadata,
+            )
         return {
             "commit_sha": commit_sha,
             "patch": patch[-131072:],
@@ -173,6 +317,7 @@ async def run_with_heartbeat(
     agent: DockerAgentExecutor,
     validator: DockerValidator,
     workspaces: LocalWorkspaceManager,
+    source: SourceCredentialClient,
 ) -> dict[str, Any]:
     task = asyncio.create_task(
         run_job(
@@ -181,6 +326,9 @@ async def run_with_heartbeat(
             agent=agent,
             validator=validator,
             workspaces=workspaces,
+            identity=identity,
+            control=control,
+            source=source,
         )
     )
     while True:
@@ -199,6 +347,7 @@ async def main() -> None:
     validator = DockerValidator(image=settings.job_image)
     async with httpx.AsyncClient() as http_client:
         control = RunnerControlClient(settings.delivery_url, http_client)
+        source = SourceCredentialClient(settings.integrations_url, http_client)
         while True:
             try:
                 job = await control.lease_job(identity)
@@ -214,6 +363,7 @@ async def main() -> None:
                         agent=agent,
                         validator=validator,
                         workspaces=workspaces,
+                        source=source,
                     )
                 except Exception as error:
                     LOGGER.exception("isolated runner job failed")

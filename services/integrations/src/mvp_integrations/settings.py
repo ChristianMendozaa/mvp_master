@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,6 +21,12 @@ class Settings(BaseSettings):
     allow_development_identity: bool = False
     github_adapter: str = "local"
     github_api_url: str = "https://api.github.com"
+    github_web_url: str = "https://github.com"
+    github_api_version: str = "2026-03-10"
     github_webhook_secret_file: str | None = None
+    public_base_url: str = "http://localhost:3000"
+    platform_operator_claim: str = "mvp_master_platform_operator"
+    encrypted_secret_root: Path = Path("/var/lib/mvp-master/secrets")
+    secret_master_key_file: Path | None = None
     nats_url: str = "nats://localhost:4222"
     internal_service_token: str = ""

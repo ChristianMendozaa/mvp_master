@@ -278,7 +278,7 @@ list of controls still required before an internet-facing deployment.
 |---|---|---|---|
 | Auth & tenancy | OIDC Authorization Code + PKCE, BFF, membership roles, RLS | — | Consistent correlation/source-IP audit fields |
 | Control-plane workflow | Organization/project, intake, specification versions, approvals, work-item readiness | — | Anonymous/magic-link client intake |
-| Source control | Provider-neutral port, signed/deduplicated webhook ingress, GitHub REST adapter | Local GitHub-shaped connector (`LocalSourceControl`) | Real App installation callbacks, credential minting, checkout/branch/push |
+| Source control | Provider-neutral port; opt-in GitHub App manifest/install flow; encrypted secret references; scoped credential leases; reconciliation; checkout/branch/push/PR/check | Local GitHub-shaped connector (`LocalSourceControl`) | GHES, issues/comments, forks/submodules/LFS |
 | Agent runtimes | `AgentRuntime` port, normalized event mapping | `deterministic` runtime (bounded fixture change) | Codex CLI adapter (exists, not packaged in the job image); no Anthropic adapter yet |
 | Runner isolation | One-use enrollment, hashed credentials, expiring/heartbeat leases, constrained job + read-only validator containers | Dedicated DinD daemon (dev-only) | Fencing tokens, control-channel mTLS, hardened production sandbox |
 | Messaging & workflow | Transactional outbox, JetStream, inbox dedup, Temporal with approval/cancel signals | — | Temporal replay/worker-restart test coverage |

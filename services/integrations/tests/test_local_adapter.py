@@ -30,6 +30,7 @@ async def test_local_connector_is_explicit_and_pull_request_is_idempotent() -> N
         title="Show delivery status",
         body="Verified locally.",
         head_branch="agent/work-item/execution",
+        head_sha="1" * 40,
         idempotency_key="execution-1",
     )
     second = await service.create_pull_request(
@@ -39,6 +40,7 @@ async def test_local_connector_is_explicit_and_pull_request_is_idempotent() -> N
         title="Show delivery status",
         body="Verified locally.",
         head_branch="agent/work-item/execution",
+        head_sha="1" * 40,
         idempotency_key="execution-1",
     )
     assert first == second

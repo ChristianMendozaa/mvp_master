@@ -14,6 +14,43 @@ class InstallationStatus(StrEnum):
     DISCONNECTED = "DISCONNECTED"
 
 
+class WebhookMode(StrEnum):
+    WEBHOOK = "WEBHOOK"
+    POLLING = "POLLING"
+
+
+class ConfigurationHealth(StrEnum):
+    PENDING = "PENDING"
+    HEALTHY = "HEALTHY"
+    INVALID = "INVALID"
+    DISABLED = "DISABLED"
+
+
+class RepositoryAccessStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    REVOKED = "REVOKED"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceControlConfiguration:
+    id: UUID
+    display_name: str
+    provider: str
+    web_base_url: str
+    api_base_url: str
+    api_version: str
+    app_id: str
+    client_id: str
+    app_slug: str
+    private_key_reference: dict[str, str | None]
+    client_secret_reference: dict[str, str | None]
+    webhook_secret_reference: dict[str, str | None]
+    webhook_mode: WebhookMode
+    enabled: bool
+    health: ConfigurationHealth = ConfigurationHealth.PENDING
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
 @dataclass(slots=True)
 class ConnectorInstallation:
     id: UUID
@@ -23,6 +60,10 @@ class ConnectorInstallation:
     account_login: str
     requested_permissions: tuple[str, ...]
     is_development_substitute: bool
+    provider_configuration_id: UUID | None = None
+    granted_permissions: tuple[str, ...] = ()
+    repository_selection: str = "SELECTED"
+    last_reconciled_at: datetime | None = None
     status: InstallationStatus = InstallationStatus.ACTIVE
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -52,6 +93,9 @@ class RepositoryConnection:
     clone_locator: str
     is_private: bool
     is_development_substitute: bool
+    access_status: RepositoryAccessStatus = RepositoryAccessStatus.ACTIVE
+    last_seen_at: datetime | None = None
+    revoked_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property

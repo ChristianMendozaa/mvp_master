@@ -16,6 +16,13 @@ contain work identifiers, selected runtime/model/authentication mode, a secret
 reference, acceptance criteria, budgets, and structured validation commands. They
 do not contain model or source-control credential values.
 
+For a connected repository, an actively leased runner requests a two-minute,
+purpose-bound source capability from delivery. Integrations accepts the signed
+capability once and mints a GitHub installation token restricted to the selected
+repository and either checkout-read or publish-write. The runner uses `GIT_ASKPASS`
+without embedding the token in a URL or argument. Git metadata remains outside the
+agent-mounted worktree.
+
 ## Local isolation
 
 Compose runs a dedicated privileged Docker-in-Docker daemon. The runner itself has no
@@ -30,8 +37,9 @@ a `finally` path.
 
 ## Known limits
 
-- The local runner copies a fixture; it does not yet obtain a temporary repository
-  lease, clone a selected repository, create a remote branch, or push a commit.
+- The simulated connector still copies a fixture. Real GitHub installations use a
+  temporary source capability, clone, deterministic execution branch, revalidation
+  after base drift, and push.
 - Job leasing is polling-based and runner credentials are long-lived after
   enrollment. Rotation, revocation UI, per-lease fencing tokens, and control-channel
   mTLS are pending.

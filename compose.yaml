@@ -257,6 +257,18 @@ services:
         condition: service_completed_successfully
     networks: [backend]
 
+  integrations-secret-init:
+    image: alpine:3.22
+    command:
+      [
+        "sh",
+        "-c",
+        "if [ ! -s /secrets/master.key ]; then umask 077; head -c 32 /dev/urandom > /secrets/master.key; fi; chown -R 10001:10001 /secrets",
+      ]
+    volumes:
+      - integrations-secrets:/secrets
+    networks: [backend]
+
   integrations:
     build:
       context: .
@@ -267,8 +279,15 @@ services:
       INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
       OIDC_JWKS_URL: http://keycloak:8080/realms/mvp-master/protocol/openid-connect/certs
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-only}
+      PUBLIC_BASE_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      SECRET_MASTER_KEY_FILE: /var/lib/mvp-master/secrets/master.key
+      ENCRYPTED_SECRET_ROOT: /var/lib/mvp-master/secrets/data
+    volumes:
+      - integrations-secrets:/var/lib/mvp-master/secrets
     depends_on:
       seed-integrations:
+        condition: service_completed_successfully
+      integrations-secret-init:
         condition: service_completed_successfully
       keycloak:
         condition: service_healthy
@@ -300,6 +319,24 @@ services:
       seed-integrations:
         condition: service_completed_successfully
       nats:
+        condition: service_healthy
+    networks: [backend]
+
+  integrations-reconcile:
+    build:
+      context: .
+      dockerfile: services/integrations/Dockerfile
+    command: ["python", "-m", "mvp_integrations.entrypoints.reconcile"]
+    <<: *service-security
+    environment:
+      <<: *python-environment
+      INTEGRATIONS_DATABASE_URL: postgresql+asyncpg://integrations:local-integrations-only@postgres:5432/integrations
+      SECRET_MASTER_KEY_FILE: /var/lib/mvp-master/secrets/master.key
+      ENCRYPTED_SECRET_ROOT: /var/lib/mvp-master/secrets/data
+    volumes:
+      - integrations-secrets:/var/lib/mvp-master/secrets
+    depends_on:
+      integrations:
         condition: service_healthy
     networks: [backend]
 
@@ -477,6 +514,7 @@ services:
       dockerfile: runners/docker_runner/Dockerfile
     environment:
       DELIVERY_URL: http://delivery:8000
+      INTEGRATIONS_URL: http://integrations:8000
       RUNNER_ID: 00000000-0000-0000-0000-000000000006
       RUNNER_CREDENTIAL: local-runner-credential-only
       DOCKER_HOST: tcp://docker:2376
@@ -538,6 +576,7 @@ networks:
 
 volumes:
   postgres-data:
+  integrations-secrets:
   nats-data:
   minio-data:
   dind-data:

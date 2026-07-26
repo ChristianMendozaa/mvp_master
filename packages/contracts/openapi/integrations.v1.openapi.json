@@ -29,6 +29,112 @@
         "title": "ConnectionCreate",
         "type": "object"
       },
+      "GitHubInstallationComplete": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Za-z0-9_-]{8,512}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "installation_id": {
+            "pattern": "^[0-9]{1,32}$",
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 256,
+            "minLength": 32,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "code",
+          "installation_id"
+        ],
+        "title": "GitHubInstallationComplete",
+        "type": "object"
+      },
+      "GitHubInstallationStart": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration_id": {
+            "format": "uuid",
+            "title": "Configuration Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configuration_id"
+        ],
+        "title": "GitHubInstallationStart",
+        "type": "object"
+      },
+      "GitHubManifestComplete": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[A-Za-z0-9_-]{8,512}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "MVP Master GitHub",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 256,
+            "minLength": 32,
+            "title": "State",
+            "type": "string"
+          },
+          "webhook_mode": {
+            "$ref": "#/components/schemas/WebhookMode",
+            "default": "POLLING"
+          }
+        },
+        "required": [
+          "state",
+          "code"
+        ],
+        "title": "GitHubManifestComplete",
+        "type": "object"
+      },
+      "GitHubManifestStart": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "default": "MVP Master GitHub",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9-]{1,39}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "webhook_mode": {
+            "$ref": "#/components/schemas/WebhookMode",
+            "default": "POLLING"
+          }
+        },
+        "title": "GitHubManifestStart",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -55,6 +161,18 @@
             "pattern": "^[A-Za-z0-9._/-]+$",
             "title": "Head Branch",
             "type": "string"
+          },
+          "head_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
           },
           "idempotency_key": {
             "maxLength": 256,
@@ -104,6 +222,18 @@
             "title": "Head Branch",
             "type": "string"
           },
+          "head_sha": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{40}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Sha"
+          },
           "title": {
             "maxLength": 300,
             "minLength": 2,
@@ -117,6 +247,22 @@
           "head_branch"
         ],
         "title": "PullRequestCreate",
+        "type": "object"
+      },
+      "SourceCredentialExchange": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "maxLength": 4096,
+            "minLength": 64,
+            "title": "Capability",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability"
+        ],
+        "title": "SourceCredentialExchange",
         "type": "object"
       },
       "ValidationError": {
@@ -158,6 +304,14 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebhookMode": {
+        "enum": [
+          "WEBHOOK",
+          "POLLING"
+        ],
+        "title": "WebhookMode",
+        "type": "string"
       }
     }
   },
@@ -247,6 +401,174 @@
           }
         },
         "summary": "Connect"
+      }
+    },
+    "/api/v1/organizations/{organization_id}/github/installations": {
+      "post": {
+        "operationId": "start_github_installation_api_v1_organizations__organization_id__github_installations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubInstallationStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Start Github Installation Api V1 Organizations  Organization Id  Github Installations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Github Installation"
+      }
+    },
+    "/api/v1/organizations/{organization_id}/github/installations/complete": {
+      "post": {
+        "operationId": "complete_github_installation_api_v1_organizations__organization_id__github_installations_complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubInstallationComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Complete Github Installation Api V1 Organizations  Organization Id  Github Installations Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Github Installation"
       }
     },
     "/api/v1/organizations/{organization_id}/repositories": {
@@ -422,6 +744,362 @@
         "summary": "Create Pull Request"
       }
     },
+    "/api/v1/organizations/{organization_id}/source-control-configurations": {
+      "get": {
+        "operationId": "available_source_control_configurations_api_v1_organizations__organization_id__source_control_configurations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Available Source Control Configurations Api V1 Organizations  Organization Id  Source Control Configurations Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Available Source Control Configurations"
+      }
+    },
+    "/api/v1/platform/source-control-configurations": {
+      "get": {
+        "operationId": "source_control_configurations_api_v1_platform_source_control_configurations_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Source Control Configurations Api V1 Platform Source Control Configurations Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Source Control Configurations"
+      }
+    },
+    "/api/v1/platform/source-control-configurations/github/manifest": {
+      "post": {
+        "operationId": "start_github_manifest_api_v1_platform_source_control_configurations_github_manifest_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubManifestStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Start Github Manifest Api V1 Platform Source Control Configurations Github Manifest Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Github Manifest"
+      }
+    },
+    "/api/v1/platform/source-control-configurations/github/manifest/complete": {
+      "post": {
+        "operationId": "complete_github_manifest_api_v1_platform_source_control_configurations_github_manifest_complete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubManifestComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Complete Github Manifest Api V1 Platform Source Control Configurations Github Manifest Complete Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Github Manifest"
+      }
+    },
+    "/api/v1/platform/source-control-configurations/{configuration_id}/disable": {
+      "post": {
+        "operationId": "disable_source_control_configuration_api_v1_platform_source_control_configurations__configuration_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "configuration_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Configuration Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Disable Source Control Configuration Api V1 Platform Source Control Configurations  Configuration Id  Disable Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable Source Control Configuration"
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "live_health_live_get",
@@ -515,6 +1193,48 @@
         "summary": "Internal Pull Request"
       }
     },
+    "/internal/v1/source-credentials/exchange": {
+      "post": {
+        "operationId": "exchange_source_credential_internal_v1_source_credentials_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceCredentialExchange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Exchange Source Credential Internal V1 Source Credentials Exchange Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Source Credential"
+      }
+    },
     "/webhooks/github": {
       "post": {
         "operationId": "github_webhook_webhooks_github_post",
@@ -544,6 +1264,22 @@
             "schema": {
               "title": "X-Hub-Signature-256",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-GitHub-Hook-Installation-Target-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Github-Hook-Installation-Target-Id"
             }
           }
         ],

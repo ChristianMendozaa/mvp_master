@@ -1,11 +1,13 @@
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
@@ -348,6 +350,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if heartbeat is None:
             raise HTTPException(status_code=409, detail="job lease is not active for runner")
         return {"status": "extended"}
+
+    @app.post("/runner/v1/jobs/{job_id}/source-capability")
+    async def source_capability(
+        job_id: UUID,
+        purpose: Annotated[str, Header(alias="X-Source-Purpose")],
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        if purpose not in {"CHECKOUT_READ", "PUBLISH_WRITE"}:
+            raise HTTPException(status_code=422, detail="source purpose is invalid")
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        job = await repo.heartbeat_runner_job(runner, job_id)
+        if job is None:
+            raise HTTPException(status_code=409, detail="job lease is not active for runner")
+        repository_id = str(job.payload.get("repository_connection_id", ""))
+        if not repository_id:
+            raise HTTPException(status_code=409, detail="job has no connected repository")
+        now = int(time.time())
+        token = jwt.encode(
+            {
+                "iss": "mvp-delivery",
+                "aud": "mvp-integrations-source",
+                "iat": now,
+                "exp": now + 120,
+                "jti": str(uuid4()),
+                "organization_id": str(job.organization_id),
+                "execution_id": str(job.execution_id),
+                "job_id": str(job.id),
+                "runner_id": str(runner.id),
+                "repository_id": repository_id,
+                "purpose": purpose,
+            },
+            resolved.internal_service_token,
+            algorithm="HS256",
+        )
+        return {"capability": str(token), "expires_in_seconds": "120"}
 
     @app.post("/api/v1/organizations/{organization_id}/executions", status_code=202)
     async def accept_ready_work_item(

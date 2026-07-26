@@ -67,3 +67,32 @@ class RunnerControlClient:
             timeout=10,
         )
         response.raise_for_status()
+
+    async def source_capability(self, identity: RunnerIdentity, job_id: str, purpose: str) -> str:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/jobs/{job_id}/source-capability",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+                "X-Source-Purpose": purpose,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return str(response.json()["capability"])
+
+
+class SourceCredentialClient:
+    def __init__(self, base_url: str, client: httpx.AsyncClient) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+
+    async def exchange(self, capability: str) -> dict[str, str]:
+        response = await self._client.post(
+            f"{self._base_url}/internal/v1/source-credentials/exchange",
+            json={"capability": capability},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return {str(key): str(value) for key, value in payload.items()}

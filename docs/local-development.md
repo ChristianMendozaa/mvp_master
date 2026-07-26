@@ -37,7 +37,16 @@ pnpm --filter @mvp-master/web build
 
 ## Real integrations
 
-The default stack uses the simulated GitHub connector and deterministic agent. The
-repository contains partial real adapters, but no Compose profile currently enables
-them. Adding credentials does not activate them. See the integration guides for the
-missing production wiring.
+The default stack still uses the simulated GitHub connector and deterministic agent.
+To register a deployment-owned GitHub App, sign in as the local owner and open
+`http://localhost:3000/app/admin/integrations/github`. Choose polling for localhost,
+continue to GitHub, then install the resulting App from the control plane.
+
+Compose generates a local master key in the `integrations-secrets` volume and uses it
+to encrypt manifest credentials. Removing that volume destroys the local ability to
+decrypt those credentials; revoke the corresponding GitHub App keys as part of
+recovery. Webhook mode requires setting `NEXT_PUBLIC_APP_URL` to an externally
+reachable HTTPS origin before registration.
+
+GitHub real is opt-in per deployment and never replaces `github-local` silently.
+Claude and Codex real runtimes remain outside this integration increment.

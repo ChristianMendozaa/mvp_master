@@ -11,6 +11,7 @@ from mvp_integrations.settings import Settings
 @dataclass(frozen=True, slots=True)
 class Principal:
     subject: str
+    is_platform_operator: bool = False
 
 
 class PrincipalProvider:
@@ -24,7 +25,7 @@ class PrincipalProvider:
         x_development_subject: str | None = Header(default=None),
     ) -> Principal:
         if self._settings.allow_development_identity and x_development_subject:
-            return Principal(subject=x_development_subject)
+            return Principal(subject=x_development_subject, is_platform_operator=True)
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="a bearer access token is required")
         token = authorization.removeprefix("Bearer ").strip()
@@ -40,4 +41,8 @@ class PrincipalProvider:
             )
         except jwt.PyJWTError as error:
             raise HTTPException(status_code=401, detail="access token is invalid") from error
-        return Principal(subject=str(claims["sub"]))
+        operator_value = claims.get(self._settings.platform_operator_claim, False)
+        return Principal(
+            subject=str(claims["sub"]),
+            is_platform_operator=operator_value is True or operator_value == "true",
+        )

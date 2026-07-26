@@ -27,10 +27,11 @@ costs, audit events, and an external reference.
 
 ## 2. Production GitHub delivery
 
-Implement GitHub App installation callbacks and reconciliation, installation-token
-leases, Issue and comment synchronization, real repository checkout, branch,
-commit/push, pull request and check-run operations, plus webhook replay and
-permission-change tests.
+Implemented for GitHub.com: deployment-owned App manifest registration, tenant
+installation proof, encrypted secret references, installation-token leases,
+repository reconciliation, real checkout, branch, commit/push, pull request and
+check-run operations. Issue/comment synchronization and GHES remain later
+increments.
 
 Exit criteria: a repository selected during App installation completes the same
 domain workflow without GitHub-specific types escaping the integrations context;

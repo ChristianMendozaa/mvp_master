@@ -170,6 +170,7 @@ class DeliveryActivities:
                 {
                     "execution_id": str(execution.id),
                     "organization_id": str(execution.organization_id),
+                    "repository_connection_id": str(execution.repository_connection_id),
                     "runtime": configuration.runtime,
                     "model": configuration.model,
                     "authentication_mode": configuration.authentication_mode.value,
@@ -225,7 +226,8 @@ class DeliveryActivities:
                         "Independently verified by MVP Master.\n\n"
                         f"Execution: {execution_id}\nCommit: {commit_sha}"
                     ),
-                    "head_branch": f"agent/{str(execution_id)[:12]}",
+                    "head_branch": f"mvp-master/executions/{execution_id}",
+                    "head_sha": commit_sha,
                     "idempotency_key": str(execution_id),
                 },
             )

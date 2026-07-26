@@ -20,6 +20,12 @@ Browser input, client requirements, repository data, webhook bodies, agent text,
   are absent from the local flow.
 - **Webhook spoofing/replay:** constant-time HMAC verification, installation-based
   routing, unique delivery IDs, payload hashes, and duplicate acknowledgement.
+- **Source credential theft:** manifest secrets are encrypted outside application
+  data; job-bound capabilities expire after two minutes and are redeemed once;
+  installation tokens are repository/purpose scoped and remain in runner memory.
+- **Malicious Git configuration:** clean clone URLs, `GIT_ASKPASS`, disabled prompts,
+  system config, hooks, LFS, and submodules, plus Git metadata outside the agent
+  worktree.
 - **Malicious workspaces:** execution IDs are validated, resolved paths must stay
   below a dedicated root, job containers receive only the workspace/exchange mounts,
   and verification receives a read-only workspace.

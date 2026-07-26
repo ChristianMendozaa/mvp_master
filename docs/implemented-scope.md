@@ -11,9 +11,10 @@ This document is updated with each increment and is the source of truth for prod
   same-origin BFF, organization roles, and server-side membership checks.
 - Control-plane organization, project, structured intake, immutable specification
   version, approval, work-item review, and readiness workflows.
-- A provider-neutral source-control port with a clearly labeled local GitHub
-  substitute. A GitHub REST adapter and signed, deduplicated webhook ingress exist,
-  but production App installation and credential minting are not wired.
+- A provider-neutral source-control port with a clearly labeled local substitute and
+  an opt-in GitHub.com App flow: operator manifest registration, encrypted secret
+  references, tenant installation proof, paginated reconciliation, signed webhooks,
+  ephemeral repository credentials, clone/push/PR, and verification check runs.
 - Provider configuration that keeps provider, runtime, model, authentication mode,
   and secret reference explicit. The deterministic runtime is runnable. A Codex CLI
   adapter exists but its binary/session and secret resolver are not packaged in the
@@ -37,9 +38,8 @@ This document is updated with each increment and is the source of truth for prod
 - Anonymous or magic-link client intake.
 - Preview-provider deployment.
 - Enterprise secret-store resolution and credential leases.
-- Real repository clone/branch/push, GitHub App installation callbacks, temporary
-  installation-token minting, Issue/comment/check synchronization, and installation
-  lifecycle reconciliation.
+- GitHub Enterprise Server, Issue/comment intake, forks, submodules, LFS, workflow
+  file changes, automatic merge, and a managed enterprise secret store.
 - Durable artifact-object storage and full token/tool-call/price-catalog accounting.
 - Execution-level PostgreSQL/Temporal replay tests and a continuously exercised
   Compose/Playwright path in CI. The complete path is checked in and has been
