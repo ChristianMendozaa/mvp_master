@@ -228,6 +228,19 @@
         "additionalProperties": false,
         "description": "A model-provider API key value, submitted once by an organization admin.\n\nWrite-only: this endpoint returns only a `SecretReference` (identifiers), never\nthe value back. Delivery's provider-configuration create endpoint takes that\nreference, never a raw value.",
         "properties": {
+          "display_name": {
+            "default": "Coding agent credential",
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "provider": {
+            "default": "openai",
+            "pattern": "^[a-z0-9-]{1,64}$",
+            "title": "Provider",
+            "type": "string"
+          },
           "value": {
             "maxLength": 8192,
             "minLength": 1,
@@ -605,6 +618,83 @@
       }
     },
     "/api/v1/organizations/{organization_id}/model-credentials": {
+      "get": {
+        "operationId": "list_model_credentials_api_v1_organizations__organization_id__model_credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "title": "Response List Model Credentials Api V1 Organizations  Organization Id  Model Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Model Credentials"
+      },
       "post": {
         "description": "Store a model-provider API key value once. Returns only a\n`SecretReference` \u2014 the value is never echoed back or logged. An\norganization admin submits this once per credential, then passes the\nreturned reference identifiers when creating a delivery provider\nconfiguration with `authentication_mode: API_KEY_REFERENCE`.",
         "operationId": "create_model_credential_api_v1_organizations__organization_id__model_credentials_post",
@@ -617,6 +707,22 @@
               "format": "uuid",
               "title": "Organization Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -689,6 +795,92 @@
           }
         },
         "summary": "Create Model Credential"
+      }
+    },
+    "/api/v1/organizations/{organization_id}/model-credentials/{credential_id}/revoke": {
+      "post": {
+        "operationId": "revoke_model_credential_api_v1_organizations__organization_id__model_credentials__credential_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Credential Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-development-subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Development-Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Revoke Model Credential Api V1 Organizations  Organization Id  Model Credentials  Credential Id  Revoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Model Credential"
       }
     },
     "/api/v1/organizations/{organization_id}/repositories": {

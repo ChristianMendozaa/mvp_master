@@ -1,10 +1,15 @@
 from uuid import uuid4
 
 import pytest
+from mvp_common.contracts import SecretReference
 from mvp_delivery.adapters.activities import AGENT_EVENT_KIND_MAP
 from mvp_delivery.adapters.memory import MemoryDeliveryRepository, MemoryWorkflowGateway
 from mvp_delivery.application.service import DeliveryService
-from mvp_delivery.domain.agent_runtimes import RUNTIME_COMPATIBILITY, ensure_supported
+from mvp_delivery.domain.agent_runtimes import (
+    AGENT_CATALOG,
+    RUNTIME_COMPATIBILITY,
+    ensure_supported,
+)
 from mvp_delivery.domain.errors import (
     BudgetExceeded,
     InvalidEnrollment,
@@ -152,6 +157,46 @@ def test_agent_provider_configuration_rejects_unsupported_combination() -> None:
             model="claude-opus-5",
             authentication_mode=AuthenticationMode.LOCAL_SESSION,
             secret_reference=None,
+            enabled=True,
+            is_development_substitute=False,
+        )
+
+
+def test_every_agent_catalog_entry_is_accepted_by_domain_policy() -> None:
+    for entry in AGENT_CATALOG:
+        AgentProviderConfiguration(
+            id=uuid4(),
+            organization_id=uuid4(),
+            display_name=entry.runtime_display_name,
+            provider=entry.provider,
+            runtime=entry.runtime,
+            model=entry.recommended_model,
+            authentication_mode=AuthenticationMode.API_KEY_REFERENCE,
+            secret_reference=SecretReference(
+                store="encrypted-file",
+                namespace="model-credentials/test",
+                key=str(uuid4()),
+            ),
+            enabled=True,
+            is_development_substitute=False,
+        )
+
+
+def test_agent_provider_configuration_rejects_model_outside_catalog() -> None:
+    with pytest.raises(UnsupportedProviderConfiguration, match="reviewed catalog"):
+        AgentProviderConfiguration(
+            id=uuid4(),
+            organization_id=uuid4(),
+            display_name="Unreviewed model",
+            provider="openai",
+            runtime="codex-cli",
+            model="provider-latest-alias",
+            authentication_mode=AuthenticationMode.API_KEY_REFERENCE,
+            secret_reference=SecretReference(
+                store="encrypted-file",
+                namespace="model-credentials/test",
+                key=str(uuid4()),
+            ),
             enabled=True,
             is_development_substitute=False,
         )

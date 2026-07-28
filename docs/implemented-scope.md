@@ -44,8 +44,12 @@ This document is updated with each increment and is the source of truth for prod
 - Per-service PostgreSQL databases, tenant columns, forced row-level security,
   automated Alembic migrations, append-only audit tables, JSON logging, and OTLP
   instrumentation.
-- A responsive Next.js workflow UI with approval actions, budget display, execution
-  timeline over SSE, verification status, and simulated pull-request links.
+- A responsive Next.js first-use wizard that guides GitHub App setup/installation,
+  repository discovery, reviewed agent/model selection, write-only API-key storage,
+  isolated provider probing, and runner readiness. The workflow UI requires explicit
+  repository, verified provider, and runner selections and retains approval actions,
+  budget display, execution timeline over SSE, verification status, and pull-request
+  references.
 - Generated and reviewed OpenAPI snapshots plus versioned JSON Schema event contracts.
 
 ## Explicitly not production-complete in this slice

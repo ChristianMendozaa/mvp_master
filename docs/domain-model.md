@@ -28,10 +28,15 @@ cost entries remain to be implemented.
 - `RepositoryConnection` is an authorized repository exposed by an installation.
 - `ExternalReference` contains provider, account/installation, repository/project, resource type and external ID.
 - `WebhookDelivery` provides signature result, deduplication and processing status.
+- `ModelCredential` stores tenant-owned metadata and a `SecretReference`; the secret
+  value exists only in the configured secret-store adapter.
 
 ## Delivery
 
 - `AgentProviderConfiguration` selects provider, runtime, model and authentication mode while storing only secret references.
+- `ProviderVerification` is an asynchronous, runner-leased probe of the exact
+  provider/runtime/model/authentication selection and records only sanitized status
+  and usage.
 - `Runner` and `RunnerPool` represent execution capacity and policy.
 - `Budget` sets cost, duration, turn and attempt limits.
 - `Execution` is a durable delivery request; `Attempt` is one bounded agent/verification cycle.

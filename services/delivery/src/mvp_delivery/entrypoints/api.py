@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -23,6 +24,7 @@ from mvp_delivery.adapters.postgres import (
     PostgresWorkflowGateway,
 )
 from mvp_delivery.application.service import DeliveryService
+from mvp_delivery.domain.agent_runtimes import AGENT_CATALOG
 from mvp_delivery.domain.errors import UnsupportedProviderConfiguration
 from mvp_delivery.domain.models import AuthenticationMode, ExecutionBudget, ExecutionStatus
 from mvp_delivery.settings import Settings
@@ -138,6 +140,18 @@ class RunnerJobComplete(RequestModel):
     validation: ValidationReport
 
 
+class ProviderVerificationCreate(RequestModel):
+    runner_pool_id: UUID
+
+
+class ProviderVerificationComplete(RequestModel):
+    success: bool
+    summary: str = Field(max_length=1000)
+    input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or Settings()
     configure_logging()
@@ -218,6 +232,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if payload.secret_reference
             else None
         )
+        if reference and (
+            reference.store != "encrypted-file"
+            or reference.namespace != f"model-credentials/{organization_id}"
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="secret reference is not owned by this organization",
+            )
         try:
             result = await use_case.create_provider_configuration(
                 organization_id=organization_id,
@@ -241,9 +263,115 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         repo: Repo,
     ) -> Any:
         await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        result: list[dict[str, Any]] = []
+        for item in await repo.list_provider_configurations(organization_id):
+            document = asdict(item)
+            latest = await repo.latest_provider_verification(organization_id, item.id)
+            document["verification_status"] = latest.status if latest else "NOT_VERIFIED"
+            document["verification_id"] = str(latest.id) if latest else None
+            result.append(document)
+        return jsonable_encoder(result)
+
+    @app.get("/api/v1/organizations/{organization_id}/agent-catalog")
+    async def agent_catalog(
+        organization_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
         return jsonable_encoder(
-            [asdict(item) for item in await repo.list_provider_configurations(organization_id)]
+            [
+                {
+                    **asdict(entry),
+                    "authentication_mode": "API_KEY_REFERENCE",
+                    "is_development_substitute": False,
+                }
+                for entry in AGENT_CATALOG
+            ]
         )
+
+    def verification_document(row: Any) -> dict[str, Any]:
+        return {
+            "id": str(row.id),
+            "provider_configuration_id": str(row.provider_configuration_id),
+            "runner_pool_id": str(row.pool_id),
+            "status": row.status,
+            "result": row.result,
+            "created_at": row.created_at.isoformat(),
+            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        }
+
+    @app.post(
+        "/api/v1/organizations/{organization_id}/provider-configurations/"
+        "{configuration_id}/verifications",
+        status_code=202,
+    )
+    async def create_provider_verification(
+        organization_id: UUID,
+        configuration_id: UUID,
+        payload: ProviderVerificationCreate,
+        principal: PrincipalDependency,
+        repo: Repo,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, MANAGEMENT_ROLES)
+        if not idempotency_key:
+            raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+        configuration = await repo.get_provider_configuration(organization_id, configuration_id)
+        if configuration is None or not configuration.enabled:
+            raise HTTPException(status_code=404, detail="provider configuration was not found")
+        pools = await repo.list_runner_pools(organization_id)
+        pool = next(
+            (item for item in pools if item["id"] == str(payload.runner_pool_id)),
+            None,
+        )
+        if pool is None:
+            raise HTTPException(status_code=404, detail="runner pool was not found")
+        raw_capabilities = pool.get("capabilities", [])
+        capabilities = (
+            {str(item) for item in raw_capabilities}
+            if isinstance(raw_capabilities, list)
+            else set()
+        )
+        if configuration.runtime not in capabilities:
+            raise HTTPException(
+                status_code=409,
+                detail=f"runner pool does not advertise runtime {configuration.runtime!r}",
+            )
+        row = await repo.create_provider_verification(
+            verification_id=uuid4(),
+            organization_id=organization_id,
+            provider_configuration_id=configuration_id,
+            pool_id=payload.runner_pool_id,
+            idempotency_key=idempotency_key,
+        )
+        await repo.record_audit(
+            organization_id=organization_id,
+            actor_subject=principal.subject,
+            action="provider_configuration.verification_requested",
+            target_id=row.id,
+            details={
+                "provider_configuration_id": str(configuration_id),
+                "runner_pool_id": str(payload.runner_pool_id),
+            },
+        )
+        return verification_document(row)
+
+    @app.get(
+        "/api/v1/organizations/{organization_id}/provider-configurations/"
+        "{configuration_id}/verifications/latest"
+    )
+    async def latest_provider_verification(
+        organization_id: UUID,
+        configuration_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> Any:
+        await authorize(repo, organization_id, principal.subject, EXECUTION_ROLES)
+        row = await repo.latest_provider_verification(organization_id, configuration_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="provider has not been verified")
+        return verification_document(row)
 
     @app.post("/api/v1/organizations/{organization_id}/runner-pools", status_code=201)
     async def create_runner_pool(
@@ -332,6 +460,116 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "organization_id": str(job.organization_id),
             **job.payload,
         }
+
+    @app.post("/runner/v1/provider-verifications/lease")
+    async def lease_provider_verification(
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> Any:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        verification = await repo.lease_provider_verification(runner)
+        if verification is None:
+            return Response(status_code=204)
+        configuration = await repo.get_provider_configuration(
+            verification.organization_id, verification.provider_configuration_id
+        )
+        if configuration is None:
+            verification.status = "FAILED"
+            verification.result = {
+                "success": False,
+                "summary": "Provider configuration is unavailable.",
+            }
+            verification.completed_at = datetime.now(UTC)
+            return Response(status_code=204)
+        return {
+            "verification_id": str(verification.id),
+            "organization_id": str(verification.organization_id),
+            "provider_configuration_id": str(configuration.id),
+            "provider": configuration.provider,
+            "runtime": configuration.runtime,
+            "model": configuration.model,
+            "authentication_mode": configuration.authentication_mode.value,
+            "secret_reference": (
+                configuration.secret_reference.model_dump()
+                if configuration.secret_reference
+                else None
+            ),
+            "max_turns": 1,
+            "max_duration_seconds": 120,
+        }
+
+    @app.post("/runner/v1/provider-verifications/{verification_id}/heartbeat")
+    async def heartbeat_provider_verification(
+        verification_id: UUID,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        row = await repo.heartbeat_provider_verification(runner, verification_id)
+        if row is None:
+            raise HTTPException(status_code=409, detail="verification lease is not active")
+        return {"status": "extended"}
+
+    @app.post("/runner/v1/provider-verifications/{verification_id}/complete")
+    async def complete_provider_verification(
+        verification_id: UUID,
+        payload: ProviderVerificationComplete,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        row = await repo.complete_provider_verification(
+            runner, verification_id, payload.model_dump(mode="json")
+        )
+        if row is None:
+            raise HTTPException(status_code=409, detail="verification lease is not active")
+        await repo.record_audit(
+            organization_id=row.organization_id,
+            actor_subject=f"runner:{runner.id}",
+            action=f"provider_configuration.verification_{row.status.lower()}",
+            target_id=row.id,
+            details={"provider_configuration_id": str(row.provider_configuration_id)},
+        )
+        return {"status": row.status}
+
+    @app.post("/runner/v1/provider-verifications/{verification_id}/model-capability")
+    async def provider_verification_model_capability(
+        verification_id: UUID,
+        repo: Repo,
+        authorization: Annotated[str | None, Header()] = None,
+        x_runner_id: Annotated[str | None, Header(alias="X-Runner-ID")] = None,
+    ) -> dict[str, str]:
+        runner = await authenticated_runner(repo, authorization, x_runner_id)
+        verification = await repo.heartbeat_provider_verification(runner, verification_id)
+        if verification is None:
+            raise HTTPException(status_code=409, detail="verification lease is not active")
+        configuration = await repo.get_provider_configuration(
+            verification.organization_id, verification.provider_configuration_id
+        )
+        if configuration is None or configuration.secret_reference is None:
+            raise HTTPException(status_code=409, detail="verification has no secret reference")
+        now = int(time.time())
+        token = jwt.encode(
+            {
+                "iss": "mvp-delivery",
+                "aud": "mvp-integrations-model",
+                "iat": now,
+                "exp": now + 60,
+                "jti": str(uuid4()),
+                "organization_id": str(verification.organization_id),
+                "execution_id": str(verification.id),
+                "job_id": str(verification.id),
+                "runner_id": str(runner.id),
+                "secret_reference": configuration.secret_reference.model_dump(),
+                "purpose": "MODEL_CREDENTIAL_READ",
+            },
+            resolved.internal_service_token,
+            algorithm="HS256",
+        )
+        return {"capability": str(token), "expires_in_seconds": "60"}
 
     @app.post("/runner/v1/jobs/{job_id}/complete")
     async def complete_runner_job(

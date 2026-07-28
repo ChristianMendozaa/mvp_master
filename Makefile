@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap lock up down migrate seed format format-check lint typecheck test test-integration test-e2e contract-check migration-check compose-validate verify security clean-local
+.PHONY: help bootstrap lock up up-guided down migrate seed format format-check lint typecheck test test-integration test-e2e contract-check migration-check compose-validate verify security clean-local
 
 help:
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -17,6 +17,9 @@ lock: ## Refresh dependency lockfiles intentionally
 
 up: ## Start the complete local stack
 	docker compose up --build -d
+
+up-guided: ## Start local stack with reviewed provider-only agent egress
+	AGENT_EGRESS_ENABLED=true docker compose up --build -d
 
 down: ## Stop the local stack while preserving data
 	docker compose down

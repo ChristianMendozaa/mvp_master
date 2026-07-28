@@ -375,6 +375,7 @@ services:
       <<: *python-environment
       DELIVERY_DATABASE_URL: postgresql+asyncpg://delivery:local-delivery-only@postgres:5432/delivery
       OIDC_JWKS_URL: http://keycloak:8080/realms/mvp-master/protocol/openid-connect/certs
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token-only}
     depends_on:
       seed-delivery:
         condition: service_completed_successfully

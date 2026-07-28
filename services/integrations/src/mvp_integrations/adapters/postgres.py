@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from mvp_common.contracts import SecretReference
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,6 +81,20 @@ class SourceCapabilityRedemptionRow(Base):
     organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     redeemed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ModelCredentialRow(Base):
+    __tablename__ = "model_credentials"
+    __table_args__ = (UniqueConstraint("organization_id", "idempotency_key"),)
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    display_name: Mapped[str] = mapped_column(String(200))
+    secret_reference: Mapped[dict[str, str | None]] = mapped_column(JSON)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class InstallationRow(Base):
@@ -271,6 +286,67 @@ class PostgresIntegrationRepository(IntegrationRepository):
             )
         )
         return True
+
+    async def add_model_credential(
+        self,
+        *,
+        credential_id: UUID,
+        organization_id: UUID,
+        provider: str,
+        display_name: str,
+        reference: SecretReference,
+        idempotency_key: str,
+    ) -> ModelCredentialRow:
+        await self.set_organization(organization_id)
+        existing = await self._session.scalar(
+            select(ModelCredentialRow).where(
+                ModelCredentialRow.organization_id == organization_id,
+                ModelCredentialRow.idempotency_key == idempotency_key,
+            )
+        )
+        if existing:
+            return existing
+        row = ModelCredentialRow(
+            id=credential_id,
+            organization_id=organization_id,
+            provider=provider,
+            display_name=display_name,
+            secret_reference=reference.model_dump(),
+            idempotency_key=idempotency_key,
+            status="ACTIVE",
+            created_at=datetime.now(UTC),
+            revoked_at=None,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_model_credentials(self, organization_id: UUID) -> tuple[ModelCredentialRow, ...]:
+        await self.set_organization(organization_id)
+        rows = (
+            await self._session.scalars(
+                select(ModelCredentialRow).order_by(ModelCredentialRow.created_at)
+            )
+        ).all()
+        return tuple(rows)
+
+    async def get_model_credential(
+        self, organization_id: UUID, credential_id: UUID
+    ) -> ModelCredentialRow | None:
+        await self.set_organization(organization_id)
+        row = await self._session.get(ModelCredentialRow, credential_id)
+        return row if row and row.organization_id == organization_id else None
+
+    async def revoke_model_credential(
+        self, organization_id: UUID, credential_id: UUID
+    ) -> ModelCredentialRow | None:
+        row = await self.get_model_credential(organization_id, credential_id)
+        if row is None:
+            return None
+        if row.status != "REVOKED":
+            row.status = "REVOKED"
+            row.revoked_at = datetime.now(UTC)
+        return row
 
     async def add_source_control_configuration(
         self, configuration: SourceControlConfiguration

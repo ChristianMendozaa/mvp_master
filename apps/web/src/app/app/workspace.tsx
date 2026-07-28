@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import type { BrowserSession } from "@/lib/auth";
 
@@ -45,8 +45,11 @@ type Repository = {
 type Provider = {
   id: string;
   display_name: string;
+  provider: string;
+  runtime: string;
   model: string;
   is_development_substitute: boolean;
+  verification_status: string;
 };
 type SourceControlConfiguration = {
   id: string;
@@ -55,7 +58,13 @@ type SourceControlConfiguration = {
   app_slug: string;
   webhook_mode: string;
 };
-type RunnerPool = { id: string; name: string; runner_type: string };
+type RunnerPool = {
+  id: string;
+  name: string;
+  runner_type: string;
+  online_runner_count: number;
+  capabilities: string[];
+};
 type Execution = {
   id: string;
   work_item_id: string;
@@ -122,6 +131,9 @@ export function ControlPlane({
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [selectedExecution, setSelectedExecution] = useState("");
+  const [selectedRepository, setSelectedRepository] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [selectedPool, setSelectedPool] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -170,6 +182,15 @@ export function ControlPlane({
     setExecutions(executionData);
     setSourceConfigurations(sourceConfigurationData);
     setSelectedExecution((current) => current || executionData[0]?.id || "");
+    if (
+      (!repos.length ||
+        !providerData.some(
+          (provider) => provider.verification_status === "PASSED",
+        )) &&
+      window.location.pathname === "/app"
+    ) {
+      window.location.replace("/app/onboarding");
+    }
   }, [organizationId]);
 
   async function installGitHub(configurationId: string): Promise<void> {
@@ -311,16 +332,11 @@ export function ControlPlane({
   const currentExecution = executions.find(
     (item) => item.id === selectedExecution,
   );
-  const readyChoices = useMemo(
-    () => ({
-      repository:
-        repositories.find((item) => !item.is_development_substitute) ??
-        repositories[0],
-      provider: providers[0],
-      pool: pools[0],
-    }),
-    [pools, providers, repositories],
+  const readyRepository = repositories.find(
+    (item) => item.id === selectedRepository,
   );
+  const readyProvider = providers.find((item) => item.id === selectedProvider);
+  const readyPool = pools.find((item) => item.id === selectedPool);
 
   return (
     <main className="shell">
@@ -576,22 +592,22 @@ export function ControlPlane({
             The local connector and deterministic agent are development
             substitutes.
           </p>
-          {readyChoices.repository ? (
+          {readyRepository ? (
             <p>
               <span
                 className={
-                  readyChoices.repository.is_development_substitute
+                  readyRepository.is_development_substitute
                     ? "status local"
                     : "status"
                 }
               >
-                {readyChoices.repository.is_development_substitute
+                {readyRepository.is_development_substitute
                   ? "Local substitute"
                   : "GitHub"}
               </span>{" "}
-              {readyChoices.repository.owner}/{readyChoices.repository.name}
+              {readyRepository.owner}/{readyRepository.name}
             </p>
-          ) : (
+          ) : repositories.length === 0 ? (
             <button
               onClick={() =>
                 void action("connector", () =>
@@ -612,7 +628,7 @@ export function ControlPlane({
             >
               Connect simulated GitHub App
             </button>
-          )}
+          ) : null}
           {sourceConfigurations.map((configuration) => (
             <button
               className="secondary"
@@ -626,6 +642,67 @@ export function ControlPlane({
               Connect {configuration.display_name}
             </button>
           ))}
+          {repositories.length && providers.length && pools.length ? (
+            <div
+              style={{
+                display: "grid",
+                gap: "0.75rem",
+                margin: "1rem 0",
+              }}
+            >
+              <label>
+                Repository for this work
+                <select
+                  value={selectedRepository}
+                  onChange={(event) =>
+                    setSelectedRepository(event.target.value)
+                  }
+                >
+                  <option value="">Select repository</option>
+                  {repositories.map((repository) => (
+                    <option key={repository.id} value={repository.id}>
+                      {repository.owner}/{repository.name}
+                      {repository.is_development_substitute ? " · local" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Coding agent
+                <select
+                  value={selectedProvider}
+                  onChange={(event) => setSelectedProvider(event.target.value)}
+                >
+                  <option value="">Select verified agent</option>
+                  {providers
+                    .filter(
+                      (provider) => provider.verification_status === "PASSED",
+                    )
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.display_name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Runner pool
+                <select
+                  value={selectedPool}
+                  onChange={(event) => setSelectedPool(event.target.value)}
+                >
+                  <option value="">Select available runner</option>
+                  {pools
+                    .filter((pool) => pool.online_runner_count > 0)
+                    .map((pool) => (
+                      <option key={pool.id} value={pool.id}>
+                        {pool.name} · {pool.online_runner_count} online
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
           {dashboard?.work_items.map((item) => (
             <article
               key={item.id}
@@ -654,9 +731,10 @@ export function ControlPlane({
               ) : item.status === "WORK_ITEMS_REVIEWED" ? (
                 <button
                   disabled={
-                    !readyChoices.repository ||
-                    !readyChoices.provider ||
-                    !readyChoices.pool
+                    !readyRepository ||
+                    !readyProvider ||
+                    !readyPool ||
+                    !readyPool.capabilities.includes(readyProvider.runtime)
                   }
                   onClick={() =>
                     void action("ready-work", () =>
@@ -666,11 +744,9 @@ export function ControlPlane({
                         {
                           method: "POST",
                           body: JSON.stringify({
-                            repository_connection_id:
-                              readyChoices.repository?.id,
-                            provider_configuration_id:
-                              readyChoices.provider?.id,
-                            runner_pool_id: readyChoices.pool?.id,
+                            repository_connection_id: readyRepository?.id,
+                            provider_configuration_id: readyProvider?.id,
+                            runner_pool_id: readyPool?.id,
                             budget: {
                               max_duration_seconds: 600,
                               max_attempts: 2,

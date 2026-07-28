@@ -138,6 +138,191 @@ label {
   color: #765015;
 }
 
+.onboarding-shell {
+  max-width: 1080px;
+  padding-bottom: 5rem;
+}
+
+.onboarding-header,
+.onboarding-finish {
+  align-items: center;
+  display: flex;
+  gap: 2rem;
+  justify-content: space-between;
+  margin: 1.5rem 0 2rem;
+}
+
+.onboarding-header h1 {
+  font-size: clamp(2.2rem, 6vw, 4.5rem);
+  line-height: 0.98;
+  margin: 0.5rem 0 1rem;
+  max-width: 13ch;
+}
+
+.onboarding-account {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+}
+
+.onboarding-progress {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 1rem;
+}
+
+.onboarding-step {
+  border-bottom: 3px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0.75rem 0;
+  text-transform: uppercase;
+}
+
+.onboarding-step.active {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.onboarding-step.complete {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.onboarding-card {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: 3.25rem 1fr;
+  margin-bottom: 1rem;
+}
+
+.onboarding-card h2 {
+  margin-top: 0.35rem;
+}
+
+.step-number {
+  color: var(--brand);
+  font-size: 1.35rem;
+  font-weight: 900;
+}
+
+.repository-list {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.repository-list > div {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.8rem;
+}
+
+.development-options {
+  border-top: 1px solid var(--line);
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+}
+
+.development-options summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.agent-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 760px;
+}
+
+.agent-options {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.agent-option {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  gap: 0.7rem;
+  padding: 1rem;
+}
+
+.agent-option.selected {
+  background: #edf8f4;
+  border-color: var(--brand);
+}
+
+.agent-option input {
+  width: auto;
+}
+
+.agent-option span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.agent-option small {
+  color: var(--muted);
+}
+
+.compact {
+  justify-self: start;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.credential-note {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.verification-state,
+.error-panel {
+  margin-bottom: 1rem;
+}
+
+.onboarding-finish {
+  background: var(--brand-dark);
+  border-radius: 1rem;
+  color: white;
+  padding: 1.5rem;
+}
+
+.onboarding-finish .eyebrow {
+  color: #9ce5ce;
+}
+
+@media (max-width: 760px) {
+  .onboarding-header,
+  .onboarding-finish {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .onboarding-account {
+    justify-content: space-between;
+  }
+
+  .onboarding-progress {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .onboarding-card {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 760px) {
   .shell {
     padding: 0.75rem;

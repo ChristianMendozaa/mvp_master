@@ -60,8 +60,8 @@ export function GitHubInstallationCallback(): React.ReactElement {
     <main className="shell">
       <h1>GitHub installation</h1>
       <p>{status}</p>
-      <a className="button" href="/app">
-        Return to control plane
+      <a className="button" href="/app/onboarding">
+        Return to onboarding
       </a>
     </main>
   );

@@ -108,6 +108,7 @@ class AgentProviderConfiguration:
             provider=self.provider,
             authentication_mode=self.authentication_mode.value,
             is_development_substitute=self.is_development_substitute,
+            model=self.model,
         )
 
 

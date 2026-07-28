@@ -19,12 +19,39 @@ test("owner delivers an approved requirement through an isolated runner", async 
     .fill("local-owner-only");
   await page.getByRole("button", { name: /sign in/i }).click();
   await expect(
+    page.getByRole("heading", { name: "Prepara tu equipo de entrega" }),
+  ).toBeVisible();
+
+  const githubStep = page
+    .getByRole("heading", { name: "Conecta GitHub" })
+    .locator("..");
+  await githubStep.getByText("Opciones de desarrollo").click();
+  await githubStep
+    .getByRole("button", { name: "Conectar repositorio local simulado" })
+    .click();
+
+  const agentStep = page
+    .getByRole("heading", {
+      name: "Elige quién implementará los cambios",
+    })
+    .locator("..");
+  await agentStep.getByText("Opciones de desarrollo").click();
+  await agentStep
+    .getByRole("button", { name: "Usar agente determinista sin red" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Ya puedes crear tu primer proyecto" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("link", { name: "Entrar al workspace" }).click();
+
+  await expect(
     page.getByRole("heading", { name: "Delivery control plane" }),
   ).toBeVisible();
-  await expect(page.getByRole("combobox").first()).toHaveValue(organizationId);
-  await expect(
-    page.getByText("Local substitute", { exact: true }),
-  ).toBeVisible();
+  await page.getByLabel("Project name").fill("Client Portal");
+  await page
+    .getByLabel("Description")
+    .fill("Local vertical-slice project created through onboarding");
+  await page.getByRole("button", { name: "Create project" }).click();
 
   const problem = `E2E requirement ${Date.now()}: publish verified status`;
   await page.getByLabel("Problem").fill(problem);
@@ -82,6 +109,9 @@ test("owner delivers an approved requirement through an isolated runner", async 
   const readyButton = workItem.getByRole("button", {
     name: "Ready with $5.00 maximum",
   });
+  await page.getByLabel("Repository for this work").selectOption({ index: 1 });
+  await page.getByLabel("Coding agent").selectOption({ index: 1 });
+  await page.getByLabel("Runner pool").selectOption({ index: 1 });
   await expect(readyButton).toBeEnabled();
   await readyButton.click();
 

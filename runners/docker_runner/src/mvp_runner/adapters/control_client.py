@@ -93,6 +93,64 @@ class RunnerControlClient:
         response.raise_for_status()
         return str(response.json()["capability"])
 
+    async def lease_provider_verification(self, identity: RunnerIdentity) -> dict[str, Any] | None:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/provider-verifications/lease",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+            },
+            timeout=35,
+        )
+        if response.status_code == 204:
+            return None
+        response.raise_for_status()
+        return dict(response.json())
+
+    async def heartbeat_provider_verification(
+        self, identity: RunnerIdentity, verification_id: str
+    ) -> None:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/provider-verifications/{verification_id}/heartbeat",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+
+    async def provider_verification_model_capability(
+        self, identity: RunnerIdentity, verification_id: str
+    ) -> str:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/provider-verifications/{verification_id}/model-capability",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return str(response.json()["capability"])
+
+    async def complete_provider_verification(
+        self,
+        identity: RunnerIdentity,
+        verification_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        response = await self._client.post(
+            f"{self._base_url}/runner/v1/provider-verifications/{verification_id}/complete",
+            headers={
+                "Authorization": f"Runner {identity.credential}",
+                "X-Runner-ID": identity.runner_id,
+            },
+            json=result,
+            timeout=35,
+        )
+        response.raise_for_status()
+
 
 class SourceCredentialClient:
     def __init__(self, base_url: str, client: httpx.AsyncClient) -> None:

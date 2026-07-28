@@ -7,15 +7,18 @@ provider-neutral `SourceControlProvider` port; `GitHubSourceControl` and
 `LocalSourceControl` are adapters. Control-plane and delivery code exchange canonical
 repository IDs and `ExternalReference` values, never Issue numbers as domain IDs.
 
-The local adapter is the only assembled connector. It exposes a synthetic
-installation, repository, Issue-like reference, and idempotent pull request so the
-vertical slice exercises the real port without credentials.
+Both the opt-in GitHub.com App adapter and the explicitly labeled local substitute
+are assembled. The substitute exposes a synthetic installation, repository, and
+idempotent pull request so deterministic tests exercise the port without credentials.
 
 ## Implemented GitHub-facing code
 
 - A platform-operator-only App Manifest wizard at
   `/app/admin/integrations/github`. The local Keycloak owner carries the dedicated
   `mvp_master_platform_operator` OIDC claim; an organization role is not sufficient.
+- The first-use wizard at `/app/onboarding` detects missing platform setup, sends an
+  operator through the manifest flow, then resumes with organization installation
+  and repository discovery. Non-operators receive a clear operator prerequisite.
 - Backend-only manifest conversion. The returned private key, client secret, and
   webhook secret are encrypted with AES-256-GCM in a persistent volume; PostgreSQL
   stores `SecretReference` documents only. The master key is mounted separately.

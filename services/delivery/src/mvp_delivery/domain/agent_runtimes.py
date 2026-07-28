@@ -39,6 +39,24 @@ class RuntimeCompatibility:
     local_session_provider: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class AgentCatalogEntry:
+    """A reviewed user-facing choice.
+
+    Model identifiers are code-owned rather than tenant input. Updating one is a
+    reviewed release change, so a provider cannot silently move an organization to
+    a different model.
+    """
+
+    provider: str
+    provider_display_name: str
+    runtime: str
+    runtime_display_name: str
+    models: tuple[str, ...]
+    recommended_model: str
+    tier: str
+
+
 RUNTIME_COMPATIBILITY: MappingProxyType[str, RuntimeCompatibility] = MappingProxyType(
     {
         "deterministic": RuntimeCompatibility(
@@ -73,12 +91,73 @@ RUNTIME_COMPATIBILITY: MappingProxyType[str, RuntimeCompatibility] = MappingProx
 )
 
 
+AGENT_CATALOG: tuple[AgentCatalogEntry, ...] = (
+    AgentCatalogEntry(
+        provider="openai",
+        provider_display_name="OpenAI",
+        runtime="codex-cli",
+        runtime_display_name="Codex",
+        models=("gpt-5.1-codex", "gpt-5.1-codex-max"),
+        recommended_model="gpt-5.1-codex",
+        tier="PRIMARY",
+    ),
+    AgentCatalogEntry(
+        provider="anthropic",
+        provider_display_name="Anthropic",
+        runtime="claude-code-cli",
+        runtime_display_name="Claude Code",
+        models=("claude-opus-5",),
+        recommended_model="claude-opus-5",
+        tier="PRIMARY",
+    ),
+    AgentCatalogEntry(
+        provider="anthropic",
+        provider_display_name="Anthropic",
+        runtime="claude-agent-sdk",
+        runtime_display_name="Claude Agent SDK",
+        models=("claude-opus-5",),
+        recommended_model="claude-opus-5",
+        tier="ADVANCED",
+    ),
+    AgentCatalogEntry(
+        provider="zhipu-glm",
+        provider_display_name="Zhipu GLM",
+        runtime="claude-code-cli",
+        runtime_display_name="Claude Code compatible runtime",
+        models=("glm-5.2",),
+        recommended_model="glm-5.2",
+        tier="ADVANCED",
+    ),
+    AgentCatalogEntry(
+        provider="moonshot-kimi",
+        provider_display_name="Moonshot Kimi",
+        runtime="claude-code-cli",
+        runtime_display_name="Claude Code compatible runtime",
+        models=("kimi-k2.5",),
+        recommended_model="kimi-k2.5",
+        tier="ADVANCED",
+    ),
+)
+
+
+def catalog_entry(*, runtime: str, provider: str) -> AgentCatalogEntry | None:
+    return next(
+        (
+            entry
+            for entry in AGENT_CATALOG
+            if entry.runtime == runtime and entry.provider == provider
+        ),
+        None,
+    )
+
+
 def ensure_supported(
     *,
     runtime: str,
     provider: str,
     authentication_mode: str,
     is_development_substitute: bool,
+    model: str | None = None,
 ) -> None:
     """Raise `UnsupportedProviderConfiguration` for any combination this system does
     not know how to run — never fall back to a nearby-looking combination."""
@@ -107,3 +186,12 @@ def ensure_supported(
             f"runtime {runtime!r} must have is_development_substitute="
             f"{compatibility.is_development_substitute!r}"
         )
+    if not is_development_substitute and model is not None:
+        entry = catalog_entry(runtime=runtime, provider=provider)
+        if entry is None or model not in entry.models:
+            allowed = list(entry.models) if entry else []
+            raise UnsupportedProviderConfiguration(
+                f"model {model!r} is not in the reviewed catalog for "
+                f"runtime {runtime!r} and provider {provider!r} "
+                f"(supported: {allowed!r})"
+            )

@@ -16,6 +16,13 @@ contain work identifiers, selected provider/runtime/model/authentication mode, a
 secret reference, acceptance criteria, budgets, and structured validation commands.
 They do not contain model or source-control credential values.
 
+When no delivery job is available, the runner also polls
+`/runner/v1/provider-verifications/lease`. A verification is tenant- and pool-bound,
+uses the same heartbeat and runner identity rules, and may redeem only a model
+credential capability. It has no source capability, repository, publish permission,
+validator phase, or durable workspace. Completion records a sanitized result and
+usage counts for onboarding.
+
 For a connected repository, an actively leased runner requests a two-minute,
 purpose-bound source capability from delivery. Integrations accepts the signed
 capability once and mints a GitHub installation token restricted to the selected

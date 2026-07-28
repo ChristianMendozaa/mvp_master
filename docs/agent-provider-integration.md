@@ -10,6 +10,28 @@ combination it does not explicitly know, at provider-configuration create time
 (422), not after a runner round-trip. API-key mode requires a `SecretReference`;
 the database and job payload never contain the secret value.
 
+The onboarding catalog is server-owned. It exposes reviewed
+provider/runtime/model combinations with primary choices (Codex/OpenAI and Claude
+Code/Anthropic) and advanced choices (Claude Agent SDK, Zhipu GLM, and Moonshot
+Kimi). The browser cannot submit an arbitrary model identifier or endpoint.
+Updating the catalog is a reviewed release change and never changes an existing
+configuration.
+
+## Guided credential and connection verification
+
+An organization admin submits a provider-labeled, write-only API key to integrations.
+The service stores an encrypted value plus tenant-owned metadata and returns only its
+`SecretReference`; metadata can be listed and the credential can be revoked, but its
+value can never be read through the public API.
+
+Delivery creates an asynchronous provider verification bound to the selected runner
+pool. The runner leases it, redeems a 60-second single-use model capability, and
+executes a one-turn probe in an ephemeral workspace through the exact
+runtime/model/provider-only egress path. The probe has no repository and cannot
+deliver changes. Its states are `QUEUED`, `RUNNING`, `PASSED`, `FAILED`, and
+`CANCELLED`; only `PASSED` configurations complete onboarding. Results expose a
+sanitized summary and token counts, never provider output or credentials.
+
 The runner-side `AgentRuntime` port covers availability, capabilities, execution,
 normalized structured events, streaming, and cancellation. Domain and application
 packages do not import provider SDKs — only `runners/docker_runner/src/mvp_runner/adapters/`

@@ -33,19 +33,21 @@ The first implemented product path is intentionally narrow, and every step below
 exercised end to end by the checked-in Playwright scenario
 (`apps/web/tests/e2e/vertical-slice.spec.ts`):
 
-1. Authenticate through OIDC and create an organization and project.
-2. Connect a repository through the production connector port (the shipped default
-   is a clearly labeled local substitute, not a real GitHub App installation).
-3. Submit structured intake and approve an immutable specification version.
-4. Review a generated work item and ready it with an explicit agent provider, runner
-   pool, and cost/turn/duration budget.
-5. Approve the execution. It runs in an isolated workspace, is independently
+1. Authenticate through OIDC and complete the guided setup: connect GitHub, select a
+   repository, choose a reviewed coding-agent/model combination, submit a write-only
+   API key, and wait for an isolated connection probe.
+2. Create a project, submit structured intake, and approve an immutable specification.
+3. Review a generated work item and explicitly select its repository, verified agent
+   configuration, runner pool, and cost/turn/duration budget.
+4. Approve the execution. It runs in an isolated workspace, is independently
    validated, and produces a commit plus a pull request reference.
-6. Review the execution timeline, verification evidence, accumulated cost, and audit
+5. Review the execution timeline, verification evidence, accumulated cost, and audit
    history.
 
-Real GitHub App and Codex adapters are opt-in and are never substituted silently for
-the development defaults — see [Implementation status](#implementation-status).
+Real GitHub App and coding-agent adapters are opt-in and are never substituted
+silently. The initial Compose seed contains only an empty local workspace,
+membership, and isolated runner; demo repositories, projects, and agents are created
+only through explicitly labeled development controls.
 
 ## Architecture
 
@@ -304,6 +306,10 @@ cp .env.example .env
 make bootstrap
 make up
 ```
+
+Use `make up-guided` instead when testing real API-key agents. It explicitly enables
+the reviewed provider-only egress proxy while leaving deterministic jobs and the
+independent validator network-disabled.
 
 `make up` builds every image, waits for infrastructure, runs each service's
 migrations and deterministic seed, then starts the APIs, workers, runner, and web

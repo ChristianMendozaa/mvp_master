@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from mvp_delivery.settings import Settings
 
 ORGANIZATION_ID = UUID("00000000-0000-0000-0000-000000000001")
-PROVIDER_ID = UUID("00000000-0000-0000-0000-000000000004")
 POOL_ID = UUID("00000000-0000-0000-0000-000000000005")
 RUNNER_ID = UUID("00000000-0000-0000-0000-000000000006")
 OWNER_SUBJECT = "11111111-1111-1111-1111-111111111111"
@@ -37,24 +36,6 @@ async def main() -> None:
         await connection.execute(
             text(
                 """
-                INSERT INTO provider_configurations (
-                    id, organization_id, display_name, provider, runtime, model,
-                    authentication_mode, secret_reference, enabled,
-                    is_development_substitute
-                )
-                VALUES (
-                    :id, :organization_id, 'Deterministic local agent',
-                    'local', 'deterministic', 'deterministic-v1', 'NONE',
-                    NULL, true, true
-                )
-                ON CONFLICT (id) DO NOTHING
-                """
-            ),
-            {"id": PROVIDER_ID, "organization_id": ORGANIZATION_ID},
-        )
-        await connection.execute(
-            text(
-                """
                 INSERT INTO runner_pools (id, organization_id, name, runner_type)
                 VALUES (:id, :organization_id, 'Local isolated runner', 'LOCAL')
                 ON CONFLICT (id) DO NOTHING
@@ -71,7 +52,8 @@ async def main() -> None:
                 )
                 VALUES (
                     :id, :organization_id, :pool_id, 'compose-runner',
-                    '["docker","deterministic"]'::jsonb,
+                    '["docker","scoped-egress","codex-cli","claude-code-cli",
+                      "claude-agent-sdk","deterministic"]'::jsonb,
                     :credential_hash, 'ONLINE', now()
                 )
                 ON CONFLICT (id) DO NOTHING

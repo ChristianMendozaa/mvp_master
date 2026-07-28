@@ -100,6 +100,8 @@ class ModelCredentialWrite(RequestModel):
     """
 
     value: str = Field(min_length=1, max_length=8192)
+    provider: str = Field(default="openai", pattern=r"^[a-z0-9-]{1,64}$")
+    display_name: str = Field(default="Coding agent credential", min_length=2, max_length=200)
 
 
 class ModelCredentialExchange(RequestModel):
@@ -616,6 +618,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: ModelCredentialWrite,
         principal: PrincipalDependency,
         repo: Repo,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> dict[str, str]:
         """Store a model-provider API key value once. Returns only a
         `SecretReference` — the value is never echoed back or logged. An
@@ -624,14 +627,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configuration with `authentication_mode: API_KEY_REFERENCE`.
         """
         await authorize(repo, organization_id, principal.subject, {"OWNER", "ADMIN"})
+        if not idempotency_key:
+            raise HTTPException(status_code=400, detail="Idempotency-Key is required")
         credential_id = uuid4()
         reference = SecretReference(
             store="encrypted-file",
             namespace=f"model-credentials/{organization_id}",
             key=str(credential_id),
         )
+        existing = next(
+            (
+                item
+                for item in await repo.list_model_credentials(organization_id)
+                if item.idempotency_key == idempotency_key
+            ),
+            None,
+        )
+        if existing:
+            existing_reference = SecretReference(**existing.secret_reference)
+            return {
+                "id": str(existing.id),
+                "provider": existing.provider,
+                "display_name": existing.display_name,
+                "status": existing.status,
+                "store": existing_reference.store,
+                "namespace": existing_reference.namespace,
+                "key": existing_reference.key,
+            }
         secret_store = encrypted_secrets()
         await secret_store.put(reference, payload.value.encode())
+        try:
+            await repo.add_model_credential(
+                credential_id=credential_id,
+                organization_id=organization_id,
+                provider=payload.provider,
+                display_name=payload.display_name,
+                reference=reference,
+                idempotency_key=idempotency_key,
+            )
+        except BaseException:
+            await secret_store.delete(reference)
+            raise
         await repo.record_audit(
             organization_id=organization_id,
             actor_subject=principal.subject,
@@ -645,10 +681,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
         return {
+            "id": str(credential_id),
+            "provider": payload.provider,
+            "display_name": payload.display_name,
+            "status": "ACTIVE",
             "store": reference.store,
             "namespace": reference.namespace,
             "key": reference.key,
         }
+
+    @app.get("/api/v1/organizations/{organization_id}/model-credentials")
+    async def list_model_credentials(
+        organization_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> list[dict[str, str]]:
+        await authorize(repo, organization_id, principal.subject, {"OWNER", "ADMIN"})
+        return [
+            {
+                "id": str(item.id),
+                "provider": item.provider,
+                "display_name": item.display_name,
+                "status": item.status,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in await repo.list_model_credentials(organization_id)
+        ]
+
+    @app.post("/api/v1/organizations/{organization_id}/model-credentials/{credential_id}/revoke")
+    async def revoke_model_credential(
+        organization_id: UUID,
+        credential_id: UUID,
+        principal: PrincipalDependency,
+        repo: Repo,
+    ) -> dict[str, str]:
+        await authorize(repo, organization_id, principal.subject, {"OWNER", "ADMIN"})
+        credential = await repo.revoke_model_credential(organization_id, credential_id)
+        if credential is None:
+            raise HTTPException(status_code=404, detail="model credential was not found")
+        await encrypted_secrets().delete(SecretReference(**credential.secret_reference))
+        await repo.record_audit(
+            organization_id=organization_id,
+            actor_subject=principal.subject,
+            action="model_credential.revoked",
+            target_type="secret_reference",
+            target_id=credential.id,
+            details={"provider": credential.provider},
+        )
+        return {"id": str(credential.id), "status": "REVOKED"}
 
     @app.post(
         "/api/v1/organizations/{organization_id}/repositories/{repository_id}/pull-requests",

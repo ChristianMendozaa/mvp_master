@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from mvp_control_plane.settings import Settings
 
 ORGANIZATION_ID = UUID("00000000-0000-0000-0000-000000000001")
-PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 OWNER_SUBJECT = "11111111-1111-1111-1111-111111111111"
 
 
@@ -23,7 +22,7 @@ async def main() -> None:
             text(
                 """
                 INSERT INTO organizations (id, name, created_at)
-                VALUES (:id, 'Acme Local', :created_at)
+                VALUES (:id, 'Local Workspace', :created_at)
                 ON CONFLICT (id) DO NOTHING
                 """
             ),
@@ -48,26 +47,6 @@ async def main() -> None:
                 """
             ),
             {"organization_id": ORGANIZATION_ID, "subject": OWNER_SUBJECT},
-        )
-        await connection.execute(
-            text(
-                """
-                INSERT INTO projects (
-                    id, organization_id, name, description,
-                    execution_approval_required, created_at
-                )
-                VALUES (
-                    :id, :organization_id, 'Client Portal',
-                    'Local vertical-slice project', true, :created_at
-                )
-                ON CONFLICT (id) DO NOTHING
-                """
-            ),
-            {
-                "id": PROJECT_ID,
-                "organization_id": ORGANIZATION_ID,
-                "created_at": datetime.now(UTC),
-            },
         )
     await engine.dispose()
 

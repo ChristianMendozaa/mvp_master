@@ -18,11 +18,19 @@ make up
 Open the web application at `http://localhost:3000`. The checked-in Keycloak realm contains synthetic local-only users documented in `.env.example`.
 
 `make up` builds the images, waits for infrastructure, runs every service-owned
-migration and deterministic seed, and then starts the APIs, workers, runner, and web
-application. `make migrate` and `make seed` are available for explicit maintenance;
-they are not additional first-start steps.
+migration and the minimal local bootstrap, and then starts the APIs, workers, runner,
+and web application. The bootstrap creates only the `Local Workspace`, owner
+membership, runner pool, and runner identity. It does not create a project,
+repository connection, or provider configuration.
 
-`make down` preserves named volumes. `make clean-local` removes only this Compose project's generated containers and volumes after confirmation.
+Use `make up-guided` for real-agent onboarding. This explicitly enables the
+provider-host allowlisted egress proxy; the validator and deterministic agent remain
+offline. `make migrate` and `make seed` remain available for explicit maintenance.
+
+`make down` preserves named volumes. `make clean-local` removes only this Compose
+project's generated containers and all named volumes after confirmation, including
+PostgreSQL, NATS, MinIO, runner workspaces, and encrypted integration secrets. It is
+an irreversible factory reset.
 
 Useful local endpoints are Keycloak at `http://localhost:8081`, Temporal UI at
 `http://localhost:8082`, Prometheus at `http://localhost:9090`, Jaeger at
@@ -37,10 +45,11 @@ pnpm --filter @mvp-master/web build
 
 ## Real integrations
 
-The default stack still uses the simulated GitHub connector and deterministic agent.
-To register a deployment-owned GitHub App, sign in as the local owner and open
-`http://localhost:3000/app/admin/integrations/github`. Choose polling for localhost,
-continue to GitHub, then install the resulting App from the control plane.
+The default stack starts without a repository or agent configuration. Sign in as the
+local owner and follow `http://localhost:3000/app/onboarding`; it links the platform
+operator through GitHub App registration when needed, then continues with tenant
+installation, repository discovery, API-key storage, and agent verification. Choose
+polling for localhost.
 
 Compose generates a local master key in the `integrations-secrets` volume and uses it
 to encrypt manifest credentials. Removing that volume destroys the local ability to
@@ -48,5 +57,5 @@ decrypt those credentials; revoke the corresponding GitHub App keys as part of
 recovery. Webhook mode requires setting `NEXT_PUBLIC_APP_URL` to an externally
 reachable HTTPS origin before registration.
 
-GitHub real is opt-in per deployment and never replaces `github-local` silently.
-Claude and Codex real runtimes remain outside this integration increment.
+GitHub and real agents are opt-in and never replace their labeled development
+substitutes silently.

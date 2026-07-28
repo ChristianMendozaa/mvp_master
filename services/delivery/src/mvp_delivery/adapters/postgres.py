@@ -148,6 +148,22 @@ class RunnerJobRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ProviderVerificationRow(Base):
+    __tablename__ = "provider_verifications"
+    __table_args__ = (UniqueConstraint("organization_id", "idempotency_key"),)
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    provider_configuration_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    pool_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(32))
+    result: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    leased_by_runner_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AuditRow(Base):
     __tablename__ = "audit_events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -304,12 +320,135 @@ class PostgresDeliveryRepository(DeliveryRepository):
             )
         )
 
-    async def list_runner_pools(self, organization_id: UUID) -> tuple[dict[str, str], ...]:
+    async def list_runner_pools(self, organization_id: UUID) -> tuple[dict[str, object], ...]:
         await self.set_organization(organization_id)
         rows = (await self._session.scalars(select(RunnerPoolRow))).all()
-        return tuple(
-            {"id": str(row.id), "name": row.name, "runner_type": row.runner_type} for row in rows
+        result: list[dict[str, object]] = []
+        for row in rows:
+            runners = (
+                await self._session.scalars(select(RunnerRow).where(RunnerRow.pool_id == row.id))
+            ).all()
+            active = [
+                runner
+                for runner in runners
+                if runner.status == "ONLINE"
+                and runner.last_seen_at >= datetime.now(UTC) - timedelta(seconds=60)
+            ]
+            capabilities = sorted(
+                {capability for runner in active for capability in runner.capabilities}
+            )
+            result.append(
+                {
+                    "id": str(row.id),
+                    "name": row.name,
+                    "runner_type": row.runner_type,
+                    "online_runner_count": len(active),
+                    "capabilities": capabilities,
+                }
+            )
+        return tuple(result)
+
+    async def create_provider_verification(
+        self,
+        *,
+        verification_id: UUID,
+        organization_id: UUID,
+        provider_configuration_id: UUID,
+        pool_id: UUID,
+        idempotency_key: str,
+    ) -> ProviderVerificationRow:
+        await self.set_organization(organization_id)
+        existing = await self._session.scalar(
+            select(ProviderVerificationRow).where(
+                ProviderVerificationRow.organization_id == organization_id,
+                ProviderVerificationRow.idempotency_key == idempotency_key,
+            )
         )
+        if existing:
+            return existing
+        row = ProviderVerificationRow(
+            id=verification_id,
+            organization_id=organization_id,
+            provider_configuration_id=provider_configuration_id,
+            pool_id=pool_id,
+            idempotency_key=idempotency_key,
+            status="QUEUED",
+            result=None,
+            leased_by_runner_id=None,
+            leased_at=None,
+            created_at=datetime.now(UTC),
+            completed_at=None,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def get_provider_verification(
+        self, organization_id: UUID, verification_id: UUID
+    ) -> ProviderVerificationRow | None:
+        await self.set_organization(organization_id)
+        row = await self._session.get(ProviderVerificationRow, verification_id)
+        return row if row and row.organization_id == organization_id else None
+
+    async def latest_provider_verification(
+        self, organization_id: UUID, provider_configuration_id: UUID
+    ) -> ProviderVerificationRow | None:
+        await self.set_organization(organization_id)
+        result: ProviderVerificationRow | None = await self._session.scalar(
+            select(ProviderVerificationRow)
+            .where(ProviderVerificationRow.provider_configuration_id == provider_configuration_id)
+            .order_by(ProviderVerificationRow.created_at.desc())
+            .limit(1)
+        )
+        return result
+
+    async def lease_provider_verification(self, runner: Runner) -> ProviderVerificationRow | None:
+        await self.set_organization(runner.organization_id)
+        stale_before = datetime.now(UTC) - timedelta(seconds=45)
+        row = await self._session.scalar(
+            select(ProviderVerificationRow)
+            .where(
+                ProviderVerificationRow.pool_id == runner.pool_id,
+                or_(
+                    ProviderVerificationRow.status == "QUEUED",
+                    (
+                        (ProviderVerificationRow.status == "RUNNING")
+                        & (ProviderVerificationRow.leased_at < stale_before)
+                    ),
+                ),
+            )
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        if row:
+            row.status = "RUNNING"
+            row.leased_by_runner_id = runner.id
+            row.leased_at = datetime.now(UTC)
+        return row
+
+    async def heartbeat_provider_verification(
+        self, runner: Runner, verification_id: UUID
+    ) -> ProviderVerificationRow | None:
+        await self.set_organization(runner.organization_id)
+        row = await self._session.get(ProviderVerificationRow, verification_id)
+        if row is None or row.leased_by_runner_id != runner.id or row.status != "RUNNING":
+            return None
+        row.leased_at = datetime.now(UTC)
+        return row
+
+    async def complete_provider_verification(
+        self,
+        runner: Runner,
+        verification_id: UUID,
+        result: dict[str, object],
+    ) -> ProviderVerificationRow | None:
+        row = await self.heartbeat_provider_verification(runner, verification_id)
+        if row is None:
+            return None
+        row.result = result
+        row.status = "PASSED" if bool(result.get("success")) else "FAILED"
+        row.completed_at = datetime.now(UTC)
+        return row
 
     async def add_enrollment_token(self, record: EnrollmentTokenRecord) -> None:
         await self.set_organization(record.organization_id)
@@ -406,6 +545,11 @@ class PostgresDeliveryRepository(DeliveryRepository):
         runner = await self.get_runner(route.organization_id, runner_id)
         if runner is None or not hmac.compare_digest(runner.credential_hash, credential_hash):
             return None
+        row = await self._session.get(RunnerRow, runner_id)
+        if row:
+            row.last_seen_at = datetime.now(UTC)
+            if row.status != "REVOKED":
+                row.status = "ONLINE"
         return runner
 
     async def create_runner_job(

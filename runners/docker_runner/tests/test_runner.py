@@ -10,7 +10,11 @@ from mvp_runner.adapters.workspace import LocalWorkspaceManager
 from mvp_runner.application.execute import RunnerExecutionService
 from mvp_runner.domain.errors import UnsupportedAuthenticationMode, UnsupportedRuntime
 from mvp_runner.domain.models import ValidationCommand
-from mvp_runner.entrypoints.daemon import failed_job_result
+from mvp_runner.entrypoints.daemon import (
+    failed_job_result,
+    initialize_repository,
+    prepare_provider_probe_workspace,
+)
 
 
 async def test_deterministic_agent_is_independently_validated(tmp_path: Path) -> None:
@@ -115,6 +119,22 @@ async def test_workspace_rejects_path_traversal(tmp_path: Path) -> None:
     manager = LocalWorkspaceManager(tmp_path / "workspaces", fixture)
     with pytest.raises(ValueError):
         await manager.provision("../escape")
+
+
+async def test_empty_probe_workspace_can_be_initialized(tmp_path: Path) -> None:
+    workspace = tmp_path / "probe"
+    workspace.mkdir()
+
+    await initialize_repository(workspace)
+
+    assert (workspace / ".mvp-empty-repository").is_file()
+
+
+def test_deterministic_provider_probe_gets_synthetic_fixture(tmp_path: Path) -> None:
+    prepare_provider_probe_workspace(tmp_path, "deterministic")
+
+    fixture = json.loads((tmp_path / "src" / "status.json").read_text())
+    assert fixture == {"title": "Provider probe", "status": "Pending"}
 
 
 def test_failed_job_result_is_bounded_and_does_not_expose_error_message() -> None:

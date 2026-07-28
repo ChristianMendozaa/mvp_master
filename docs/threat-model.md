@@ -36,6 +36,10 @@ Browser input, client requirements, repository data, webhook bodies, agent text,
   terminates TLS nor accepts a destination outside the allowlist. Off by default
   (`AGENT_EGRESS_ENABLED=false`); a job requesting a real-agent runtime while egress
   is disabled fails loudly rather than running without network.
+- **Onboarding probe:** connection verification uses the same one-use credential
+  capability and provider-only egress as an execution, but has no repository,
+  delivery permission, or persistent workspace. Public failures are sanitized and
+  raw provider output remains runner-local.
 - **Webhook spoofing/replay:** constant-time HMAC verification, installation-based
   routing, unique delivery IDs, payload hashes, and duplicate acknowledgement.
 - **Source credential theft:** manifest secrets are encrypted outside application

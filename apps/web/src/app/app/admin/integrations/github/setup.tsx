@@ -89,6 +89,9 @@ export function GitHubSetup(): React.ReactElement {
         Register one GitHub App owned by this deployment. Secret values return
         directly to the integrations service and are encrypted before storage.
       </p>
+      <p>
+        <a href="/app/onboarding">← Return to onboarding</a>
+      </p>
       {error ? <div role="alert">{error}</div> : null}
       {configurations.map((item) => (
         <section className="card" key={item.id}>

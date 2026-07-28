@@ -90,8 +90,28 @@ async def git(
             await asyncio.to_thread(shutil.rmtree, askpass_root)
 
 
+def ensure_repository_has_content(workspace: Path) -> None:
+    if not any(path.name != ".git" for path in workspace.iterdir()):
+        (workspace / ".mvp-empty-repository").write_text(
+            "Isolated workspace initialized by MVP Master.\n",
+            encoding="utf-8",
+        )
+
+
+def prepare_provider_probe_workspace(workspace: Path, runtime: str) -> None:
+    if runtime != "deterministic":
+        return
+    fixture = workspace / "src" / "status.json"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(
+        json.dumps({"title": "Provider probe", "status": "Pending"}) + "\n",
+        encoding="utf-8",
+    )
+
+
 async def initialize_repository(workspace: Path) -> None:
     await git(workspace, "init", "--initial-branch=main")
+    await asyncio.to_thread(ensure_repository_has_content, workspace)
     await git(workspace, "add", "--all")
     await git(workspace, "commit", "-m", "chore: initialize isolated fixture")
 
@@ -395,6 +415,97 @@ async def run_with_heartbeat(
         await control.heartbeat_job(identity, str(job["job_id"]))
 
 
+async def run_provider_verification(
+    verification: dict[str, Any],
+    *,
+    settings: Settings,
+    agent: DockerAgentExecutor,
+    workspaces: LocalWorkspaceManager,
+    identity: RunnerIdentity,
+    control: RunnerControlClient,
+    credentials: ModelCredentialClient,
+    egress: EgressNetworkManager | None,
+) -> dict[str, Any]:
+    """Exercise the exact runtime/model/auth path without a repository or delivery."""
+    verification_id = str(verification["verification_id"])
+    workspace, _ = await workspaces.provision_empty(verification_id)
+    exchange = settings.workspace_root / f"{verification_id}-probe-exchange"
+    exchange.mkdir(mode=0o700, parents=True, exist_ok=False)
+    try:
+        runtime = str(verification["runtime"])
+        await asyncio.to_thread(prepare_provider_probe_workspace, workspace, runtime)
+        await initialize_repository(workspace)
+        environment: dict[str, str] = {}
+        if str(verification.get("authentication_mode")) == "API_KEY_REFERENCE":
+            capability = await control.provider_verification_model_capability(
+                identity, verification_id
+            )
+            secret_value = await credentials.exchange(capability)
+            environment["MVP_MODEL_CREDENTIAL"] = secret_value
+        network: str | None = None
+        if runtime in EGRESS_REQUIRED_RUNTIMES:
+            if egress is None:
+                raise RuntimeError("scoped provider egress is disabled on this runner")
+            proxy_url = await egress.ensure()
+            for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+                environment[name] = proxy_url
+            environment["NO_PROXY"] = environment["no_proxy"] = ""
+            network = settings.agent_egress_network
+        payload = {
+            **verification,
+            "execution_id": verification_id,
+            "title": "Provider connection verification",
+            "problem": (
+                "Confirm this coding-agent connection. Return a short READY response "
+                "and do not modify repository files."
+            ),
+            "acceptance_criteria": ["Provider authentication succeeds"],
+        }
+        (exchange / "input.json").write_text(
+            json.dumps(payload, separators=(",", ":")), encoding="utf-8"
+        )
+        result = await agent.execute(
+            workspace=workspace,
+            exchange=exchange,
+            timeout_seconds=int(verification["max_duration_seconds"]),
+            environment=environment,
+            network=network,
+        )
+        return {
+            "success": bool(result["success"]),
+            "summary": (
+                "Provider connection verified."
+                if result["success"]
+                else "Provider connection could not be verified."
+            ),
+            "input_tokens": result.get("input_tokens"),
+            "cached_input_tokens": result.get("cached_input_tokens"),
+            "output_tokens": result.get("output_tokens"),
+        }
+    finally:
+        await workspaces.cleanup(verification_id)
+        if exchange.exists():
+            for child in exchange.iterdir():
+                child.unlink()
+            exchange.rmdir()
+
+
+async def run_provider_verification_with_heartbeat(
+    verification: dict[str, Any],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    identity = kwargs["identity"]
+    control = kwargs["control"]
+    task = asyncio.create_task(run_provider_verification(verification, **kwargs))
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=10)
+        if task in done:
+            return await task
+        await control.heartbeat_provider_verification(
+            identity, str(verification["verification_id"])
+        )
+
+
 async def main() -> None:
     configure_logging()
     settings = Settings()
@@ -423,7 +534,35 @@ async def main() -> None:
             try:
                 job = await control.lease_job(identity)
                 if job is None:
-                    await asyncio.sleep(settings.poll_seconds)
+                    verification = await control.lease_provider_verification(identity)
+                    if verification is None:
+                        await asyncio.sleep(settings.poll_seconds)
+                        continue
+                    try:
+                        verification_result = await run_provider_verification_with_heartbeat(
+                            verification,
+                            settings=settings,
+                            agent=agent,
+                            workspaces=workspaces,
+                            identity=identity,
+                            control=control,
+                            credentials=credentials,
+                            egress=egress,
+                        )
+                    except Exception:
+                        LOGGER.exception("provider verification failed")
+                        verification_result = {
+                            "success": False,
+                            "summary": ("Provider verification failed inside the isolated runner."),
+                            "input_tokens": None,
+                            "cached_input_tokens": None,
+                            "output_tokens": None,
+                        }
+                    await control.complete_provider_verification(
+                        identity,
+                        str(verification["verification_id"]),
+                        verification_result,
+                    )
                     continue
                 try:
                     result = await run_with_heartbeat(

@@ -6,6 +6,12 @@ with the provider signature rather than OIDC. Reviewed OpenAPI snapshots live in
 `packages/contracts/openapi`; live documents are served at
 `/api/v1/openapi.json`.
 
+Onboarding uses additive v1 resources: integrations owns write-only model
+credentials and revocation; delivery owns the reviewed agent catalog, provider
+configurations, runner availability, and asynchronous provider verifications.
+Runner verification lease/capability/completion routes remain under `/runner/v1` and
+are authenticated with the same tenant-bound runner identity as execution jobs.
+
 Domain events use the shared envelope in
 `packages/contracts/events/event-envelope.v1.schema.json`. Event names include their
 major version, such as `membership.changed.v1` and `work_item.ready.v1`. The envelope

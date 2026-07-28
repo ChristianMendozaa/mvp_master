@@ -51,7 +51,7 @@ export function GitHubManifestCallback(): React.ReactElement {
     ).then(async (response) => {
       setStatus(
         response.ok
-          ? "GitHub App configured. You may return to the control plane."
+          ? "GitHub App configured. Return to onboarding to install it."
           : `Configuration failed: ${await response.text()}`,
       );
     });
@@ -62,8 +62,8 @@ export function GitHubManifestCallback(): React.ReactElement {
     <main className="shell">
       <h1>GitHub App setup</h1>
       <p>{status}</p>
-      <a className="button" href="/app/admin/integrations/github">
-        Back to GitHub settings
+      <a className="button" href="/app/onboarding">
+        Return to onboarding
       </a>
     </main>
   );
